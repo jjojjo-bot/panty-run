@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #0b0b12;
+  color: #f4f4f6;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+/* Prevent long-press text selection on mobile gameplay */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
