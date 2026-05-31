@@ -159,6 +159,7 @@ const OBSTACLE_EMOJI: Record<string, string> = {
 
 export class RunScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Image;
+  private playerDmg!: Phaser.GameObjects.Image; // 생명 감소 시 낡음 오버레이
   private playerBody!: Phaser.Physics.Arcade.Body;
   private bgFar!: Phaser.GameObjects.Graphics;
   private terrain!: Phaser.GameObjects.Graphics;
@@ -289,6 +290,12 @@ export class RunScene extends Phaser.Scene {
     this.playerBody.moves = false; // 이동은 직접 관리, Arcade는 overlap 감지용
     this.playerBody.setSize(40, 56, true);
 
+    // 낡음 오버레이 — 생명 줄수록 구멍·얼룩·찢김이 심해진다
+    this.makeDamageTexture("tex_dmg1", 1);
+    this.makeDamageTexture("tex_dmg2", 2);
+    this.playerDmg = this.add.image(PLAYER_X, this.player.y, "tex_dmg1").setDepth(6).setVisible(false);
+    this.playerDmg.setDisplaySize(64, 64);
+
     this.obstacles = this.physics.add.group({ allowGravity: false, immovable: true });
     this.coins = this.physics.add.group({ allowGravity: false });
     this.items = this.physics.add.group({ allowGravity: false });
@@ -414,6 +421,7 @@ export class RunScene extends Phaser.Scene {
     this.drawTerrain();
     this.drawSpeedLines(dt);
     this.updatePlayer(dt);
+    this.syncPlayerDmg();
     this.updateObstacles();
     this.updateCoins();
     this.updateItems();
@@ -1041,6 +1049,9 @@ export class RunScene extends Phaser.Scene {
     this.smash(go); // 부딪힌 장애물 제거
     this.speed = this.baseSpeed; // 속도 초기화로 숨통
     this.invincibleTimer = Math.max(this.invincibleTimer, HIT_IFRAMES);
+    // 빤쓰 낡음 단계 갱신 (생명 2 → 1단계, 1 → 2단계)
+    this.playerDmg.setTexture(this.lives === 2 ? "tex_dmg1" : "tex_dmg2");
+    this.playerDmg.setVisible(true);
     this.cameras.main.shake(180, 0.014);
     this.cameras.main.flash(120, 255, 110, 110);
     this.popText(this.player.x, this.player.y - 30, "빤쓰 -1 🩲", "#ff5a6a", true);
@@ -1082,6 +1093,61 @@ export class RunScene extends Phaser.Scene {
     }
   }
 
+  /** 낡음(데미지) 오버레이 텍스처 — 구멍·얼룩·찢김 */
+  private makeDamageTexture(key: string, level: number) {
+    if (this.textures.exists(key)) this.textures.remove(key);
+    const tex = this.textures.createCanvas(key, 96, 96);
+    if (!tex) return;
+    const ctx = tex.getContext();
+    const S = 96;
+    ctx.clearRect(0, 0, S, S);
+    const hole = (x: number, y: number, r: number) => {
+      ctx.beginPath();
+      ctx.arc(x * S, y * S, r * S, 0, Math.PI * 2);
+      ctx.fillStyle = "#15151c";
+      ctx.fill();
+      ctx.lineWidth = S * 0.012;
+      ctx.strokeStyle = "rgba(255,255,255,0.4)";
+      ctx.stroke();
+    };
+    const dirt = (x: number, y: number, r: number) => {
+      ctx.beginPath();
+      ctx.ellipse(x * S, y * S, r * S, r * S * 0.7, 0.4, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(90,64,40,0.5)";
+      ctx.fill();
+    };
+    if (level === 1) {
+      hole(0.4, 0.62, 0.045);
+      dirt(0.6, 0.58, 0.07);
+    } else {
+      hole(0.38, 0.6, 0.05);
+      hole(0.61, 0.64, 0.045);
+      hole(0.5, 0.5, 0.035);
+      dirt(0.56, 0.7, 0.09);
+      dirt(0.34, 0.66, 0.06);
+      // 너덜너덜 찢긴 아래 가장자리
+      ctx.strokeStyle = "#15151c";
+      ctx.lineWidth = S * 0.02;
+      ctx.beginPath();
+      const y0 = 0.78 * S;
+      ctx.moveTo(0.3 * S, y0);
+      for (let i = 1; i <= 6; i++) {
+        ctx.lineTo((0.3 + i * 0.066) * S, y0 + (i % 2 ? -S * 0.03 : S * 0.02));
+      }
+      ctx.stroke();
+    }
+    tex.refresh();
+  }
+
+  /** 낡음 오버레이를 플레이어 변형에 맞춰 동기화 */
+  private syncPlayerDmg() {
+    if (!this.playerDmg.visible) return;
+    this.playerDmg.setPosition(this.player.x, this.player.y);
+    this.playerDmg.rotation = this.player.rotation;
+    this.playerDmg.setScale(this.player.scaleX, this.player.scaleY);
+    this.playerDmg.setAlpha(this.player.alpha);
+  }
+
   /** 종류 스킨용 — 직접 그린 빤쓰 텍스처 */
   private makeSkinTexture(key: string, type: Parameters<typeof drawPanty>[2], colorHex: string) {
     if (this.textures.exists(key)) this.textures.remove(key);
@@ -1108,6 +1174,7 @@ export class RunScene extends Phaser.Scene {
     if (!this.alive) return;
     this.alive = false;
     this.physics.pause();
+    this.playerDmg.setVisible(false);
     this.tweens.killTweensOf(this.player);
     this.cameras.main.shake(300, 0.02);
     this.cameras.main.flash(140, 255, 80, 80);
