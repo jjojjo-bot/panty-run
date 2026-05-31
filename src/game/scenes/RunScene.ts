@@ -11,6 +11,7 @@ export interface RunSceneData {
     coins: number;
     nearMisses: number;
     score: number;
+    items: Record<string, number>;
   }) => void;
 }
 
@@ -200,6 +201,7 @@ export class RunScene extends Phaser.Scene {
   private airJumpUsed = false; // 공중 2단 점프 사용 여부
   private bonusScore = 0; // 점수 2배 동안 쌓은 추가 점수
   private itemTimer = 0; // 다음 아이템 등장까지
+  private itemCounts: Record<string, number> = {}; // 이번 판 아이템 획득 집계
 
   private streaks: { x: number; y: number; len: number }[] = [];
 
@@ -238,6 +240,7 @@ export class RunScene extends Phaser.Scene {
     this.airJumpUsed = false;
     this.bonusScore = 0;
     this.itemTimer = 10;
+    this.itemCounts = {};
   }
 
   create() {
@@ -891,6 +894,7 @@ export class RunScene extends Phaser.Scene {
     const y = go.y;
     this.tweens.killTweensOf(go);
     go.destroy();
+    this.itemCounts[kind] = (this.itemCounts[kind] ?? 0) + 1;
     this.activateItem(kind, x, y);
   }
 
@@ -1052,6 +1056,7 @@ export class RunScene extends Phaser.Scene {
         coins: this.coinCount,
         nearMisses: this.nearMisses,
         score: this.liveScore(),
+        items: this.itemCounts,
       });
     });
   }

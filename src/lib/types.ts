@@ -61,4 +61,5 @@ export interface RunResult {
   coins: number;
   nearMisses: number;
   score: number;
+  items: Record<string, number>; // 이번 판에 획득한 능력 아이템 종류별 수
 }

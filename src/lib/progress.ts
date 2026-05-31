@@ -16,6 +16,8 @@ export interface Stats {
   minSurvived: number | null;
   newRecordCount: number;
   categoriesPlayed: string[];
+  itemTotals: Record<string, number>; // 능력 아이템 종류별 누적 획득 수
+  maxItemsInRun: number; // 한 판 최다 아이템 획득
   unlocked: string[]; // 해금된 업적 id
   equippedSkin: string; // 장착 스킨 id
 }
@@ -46,9 +48,15 @@ function defaultStats(): Stats {
     minSurvived: null,
     newRecordCount: 0,
     categoriesPlayed: [],
+    itemTotals: {},
+    maxItemsInRun: 0,
     unlocked: [],
     equippedSkin: "default",
   };
+}
+
+function sumItems(s: Stats): number {
+  return Object.values(s.itemTotals).reduce((a, b) => a + b, 0);
 }
 
 // ── 업적 정의 ────────────────────────────────────────────────
@@ -70,6 +78,12 @@ const ACHIEVEMENT_DEFS: AchievementDef[] = [
   { id: "all_categories", emoji: "🌍", title: "현실 부정 마스터", desc: "5개 상황 전부 플레이", test: (s) => s.categoriesPlayed.length >= 6 },
   { id: "record_5", emoji: "📈", title: "기록 경신왕", desc: "신기록 5회 달성", test: (s) => s.newRecordCount >= 5 },
   { id: "quick_death", emoji: "☠️", title: "3초 컷", desc: "3초 만에 산화", test: (s) => s.minSurvived !== null && s.minSurvived < 3 },
+  // 능력 아이템 연계
+  { id: "item_first", emoji: "🎁", title: "능력 각성", desc: "능력 아이템 첫 획득", test: (s) => sumItems(s) >= 1 },
+  { id: "item_collector", emoji: "🧲", title: "능력 수집가", desc: "아이템 누적 20개", test: (s) => sumItems(s) >= 20 },
+  { id: "rocket_5", emoji: "🚀", title: "로켓맨", desc: "로켓 빤쓰 5번", test: (s) => (s.itemTotals.rocket ?? 0) >= 5 },
+  { id: "item_glutton", emoji: "🎰", title: "능력 폭식", desc: "한 판에 아이템 4개", test: (s) => s.maxItemsInRun >= 4 },
+  { id: "mine_step", emoji: "💩", title: "똥 밟았다", desc: "지뢰 빤쓰를 밟았다", test: (s) => (s.itemTotals.mine ?? 0) >= 1 },
 ];
 
 export const ACHIEVEMENTS: Achievement[] = ACHIEVEMENT_DEFS.map(
@@ -85,6 +99,9 @@ export const SKINS: Skin[] = [
   { id: "red", name: "분노의 빤쓰", tint: 0xff5a4d, achievementId: "near_5" },
   { id: "mint", name: "민트 빤쓰", tint: 0x7fe6c0, achievementId: "all_categories" },
   { id: "gold", name: "황금 빤쓰", tint: 0xffd84d, achievementId: "score_3k" },
+  { id: "neon", name: "네온 빤쓰", tint: 0x9eff3d, achievementId: "item_collector" },
+  { id: "flame", name: "불꽃 빤쓰", tint: 0xff7a1a, achievementId: "rocket_5" },
+  { id: "poop", name: "똥색 빤쓰", tint: 0x8b5a2b, achievementId: "mine_step" },
 ];
 
 export function tintToHex(tint: number): string {
@@ -145,6 +162,15 @@ export function recordRun(result: RunResult): RunOutcome {
   if (!s.categoriesPlayed.includes(result.setup.category)) {
     s.categoriesPlayed.push(result.setup.category);
   }
+
+  // 능력 아이템 사용 누적
+  const runItems = result.items ?? {};
+  let runItemTotal = 0;
+  for (const [kind, n] of Object.entries(runItems)) {
+    s.itemTotals[kind] = (s.itemTotals[kind] ?? 0) + n;
+    runItemTotal += n;
+  }
+  s.maxItemsInRun = Math.max(s.maxItemsInRun, runItemTotal);
 
   const isNewRecord = result.score > s.bestScore;
   if (isNewRecord) {

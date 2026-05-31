@@ -26,6 +26,7 @@ export default function ResultPage() {
       const parsed = JSON.parse(raw) as RunResult;
       // 옛 세션 데이터 호환: 누락된 필드 보정
       if (typeof parsed.nearMisses !== "number") parsed.nearMisses = 0;
+      if (!parsed.items || typeof parsed.items !== "object") parsed.items = {};
       if (typeof parsed.score !== "number") {
         parsed.score = computeScore({
           distance: parsed.distanceMeters,

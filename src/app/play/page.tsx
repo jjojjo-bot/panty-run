@@ -31,6 +31,7 @@ export default function PlayPage() {
       coins: number;
       nearMisses: number;
       score: number;
+      items: Record<string, number>;
     }) => {
       if (!setup) return;
       const result: RunResult = {
@@ -40,6 +41,7 @@ export default function PlayPage() {
         coins: stats.coins,
         nearMisses: stats.nearMisses,
         score: stats.score,
+        items: stats.items,
       };
       sessionStorage.setItem("panty_run_result", JSON.stringify(result));
       router.push("/result");
