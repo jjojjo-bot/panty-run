@@ -18,6 +18,8 @@ export interface Stats {
   categoriesPlayed: string[];
   itemTotals: Record<string, number>; // 능력 아이템 종류별 누적 획득 수
   maxItemsInRun: number; // 한 판 최다 아이템 획득
+  coinBalance: number; // 쓸 수 있는 코인 잔액(상점 구매에 사용)
+  purchased: string[]; // 코인으로 구매한 스킨 id
   unlocked: string[]; // 해금된 업적 id
   equippedSkin: string; // 장착 스킨 id
 }
@@ -33,7 +35,8 @@ export interface Skin {
   id: string;
   name: string;
   tint: number; // 0xRRGGBB (0xffffff = 원래 색)
-  achievementId: string | null; // null = 기본(항상 보유)
+  achievementId: string | null; // 업적으로 해금되는 스킨이면 업적 id
+  price?: number; // 코인 상점 구매가 (있으면 상점 전용)
 }
 
 function defaultStats(): Stats {
@@ -50,6 +53,8 @@ function defaultStats(): Stats {
     categoriesPlayed: [],
     itemTotals: {},
     maxItemsInRun: 0,
+    coinBalance: 0,
+    purchased: [],
     unlocked: [],
     equippedSkin: "default",
   };
@@ -102,6 +107,12 @@ export const SKINS: Skin[] = [
   { id: "neon", name: "네온 빤쓰", tint: 0x9eff3d, achievementId: "item_collector" },
   { id: "flame", name: "불꽃 빤쓰", tint: 0xff7a1a, achievementId: "rocket_5" },
   { id: "poop", name: "똥색 빤쓰", tint: 0x8b5a2b, achievementId: "mine_step" },
+  // 코인 상점 전용 스킨
+  { id: "obsidian", name: "흑요석 빤쓰", tint: 0x3a3a4d, achievementId: null, price: 50 },
+  { id: "coral", name: "코랄 빤쓰", tint: 0xff7f6e, achievementId: null, price: 80 },
+  { id: "lavender", name: "라벤더 빤쓰", tint: 0xc9a0ff, achievementId: null, price: 120 },
+  { id: "teal", name: "청록 빤쓰", tint: 0x00c2c7, achievementId: null, price: 160 },
+  { id: "diamond", name: "다이아 빤쓰", tint: 0xb9f2ff, achievementId: null, price: 300 },
 ];
 
 export function tintToHex(tint: number): string {
@@ -121,7 +132,11 @@ export function getStats(): Stats {
     return s;
   }
   try {
-    return { ...defaultStats(), ...(JSON.parse(raw) as Partial<Stats>) };
+    const parsed = JSON.parse(raw) as Partial<Stats>;
+    const merged = { ...defaultStats(), ...parsed };
+    // 지갑 도입 전 사용자: 그동안 모은 코인을 잔액으로 이관
+    if (parsed.coinBalance === undefined) merged.coinBalance = merged.totalCoins;
+    return merged;
   } catch {
     return defaultStats();
   }
@@ -152,6 +167,7 @@ export function recordRun(result: RunResult): RunOutcome {
   s.totalRuns += 1;
   s.totalDistance += dist;
   s.totalCoins += result.coins;
+  s.coinBalance += result.coins; // 상점에서 쓸 수 있는 잔액 적립
   s.totalNearMisses += result.nearMisses;
   s.bestDistance = Math.max(s.bestDistance, dist);
   s.maxNearMissesInRun = Math.max(s.maxNearMissesInRun, result.nearMisses);
@@ -195,7 +211,33 @@ export function recordRun(result: RunResult): RunOutcome {
 }
 
 export function isSkinUnlocked(skin: Skin, stats: Stats): boolean {
-  return skin.achievementId === null || stats.unlocked.includes(skin.achievementId);
+  if (skin.id === "default") return true;
+  if (skin.achievementId) return stats.unlocked.includes(skin.achievementId);
+  if (skin.price !== undefined) return stats.purchased.includes(skin.id); // 상점 스킨
+  return true;
+}
+
+export function getCoinBalance(): number {
+  return getStats().coinBalance;
+}
+
+export interface BuyResult {
+  ok: boolean;
+  reason?: "owned" | "insufficient" | "invalid";
+  balance: number;
+}
+
+/** 코인으로 스킨 구매. 성공 시 차감·소유 처리하고 잔액 반환. */
+export function buySkin(skinId: string): BuyResult {
+  const s = getStats();
+  const skin = SKINS.find((sk) => sk.id === skinId);
+  if (!skin || skin.price === undefined) return { ok: false, reason: "invalid", balance: s.coinBalance };
+  if (isSkinUnlocked(skin, s)) return { ok: false, reason: "owned", balance: s.coinBalance };
+  if (s.coinBalance < skin.price) return { ok: false, reason: "insufficient", balance: s.coinBalance };
+  s.coinBalance -= skin.price;
+  s.purchased.push(skin.id);
+  saveStats(s);
+  return { ok: true, balance: s.coinBalance };
 }
 
 export function setEquippedSkin(skinId: string): void {

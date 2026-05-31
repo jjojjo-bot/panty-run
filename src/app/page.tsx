@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { analyzeInput } from "@/lib/analyzer";
 import { resolveSetup } from "@/lib/resolver";
 import { gradeForScore } from "@/lib/grade";
-import { getBestScore } from "@/lib/progress";
+import { getBestScore, getCoinBalance } from "@/lib/progress";
 
 const PRESETS = [
   "월요일 출근 너무 싫어",
@@ -20,9 +20,11 @@ export default function InputPage() {
   const router = useRouter();
   const [input, setInput] = useState("");
   const [best, setBest] = useState(0);
+  const [coins, setCoins] = useState(0);
 
   useEffect(() => {
     setBest(getBestScore());
+    setCoins(getCoinBalance());
   }, []);
 
   function start() {
@@ -57,6 +59,12 @@ export default function InputPage() {
             className="text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5 hover:text-panty-ink transition"
           >
             🏅 업적·스킨
+          </Link>
+          <Link
+            href="/shop"
+            className="text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5 hover:text-panty-ink transition"
+          >
+            🛒 상점 · 🪙{coins.toLocaleString()}
           </Link>
         </div>
 
