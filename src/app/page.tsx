@@ -1,10 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { analyzeInput } from "@/lib/analyzer";
 import { resolveSetup } from "@/lib/resolver";
-import { getBestScore, gradeForScore } from "@/lib/grade";
+import { gradeForScore } from "@/lib/grade";
+import { getBestScore } from "@/lib/progress";
 
 const PRESETS = [
   "월요일 출근 너무 싫어",
@@ -44,11 +46,19 @@ export default function InputPage() {
           빤쓰가 대신 달린다.
         </p>
 
-        {best > 0 && (
-          <div className="mb-6 text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5">
-            🏆 최고 {best.toLocaleString()}점 · {gradeForScore(best).title}
-          </div>
-        )}
+        <div className="flex items-center gap-2 mb-6">
+          {best > 0 && (
+            <div className="text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5">
+              🏆 최고 {best.toLocaleString()}점 · {gradeForScore(best).title}
+            </div>
+          )}
+          <Link
+            href="/collection"
+            className="text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5 hover:text-panty-ink transition"
+          >
+            🏅 업적·스킨
+          </Link>
+        </div>
 
         <textarea
           value={input}

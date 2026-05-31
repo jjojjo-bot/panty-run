@@ -24,27 +24,4 @@ export function gradeForScore(score: number): Grade {
   return { emoji: "🐌", title: "오늘은 못 도망쳤다" };
 }
 
-const BEST_KEY = "panty_run_best";
-
-/** 로컬 최고 점수 읽기 (SSR 안전) */
-export function getBestScore(): number {
-  if (typeof window === "undefined") return 0;
-  const raw = window.localStorage.getItem(BEST_KEY);
-  const n = raw ? parseInt(raw, 10) : 0;
-  return Number.isFinite(n) ? n : 0;
-}
-
-/**
- * 점수가 기존 최고를 넘으면 저장하고 true 반환.
- * @returns { best, isNewRecord }
- */
-export function submitScore(score: number): { best: number; isNewRecord: boolean } {
-  const prev = getBestScore();
-  if (score > prev) {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(BEST_KEY, String(score));
-    }
-    return { best: score, isNewRecord: true };
-  }
-  return { best: prev, isNewRecord: false };
-}
+// 최고점수·누적통계·업적·스킨은 @/lib/progress 로 이전됨.

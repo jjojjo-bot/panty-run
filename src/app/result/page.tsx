@@ -5,16 +5,15 @@ import { useEffect, useRef, useState } from "react";
 import type { RunResult } from "@/lib/types";
 import { renderResultText } from "@/lib/resolver";
 import { encodeSharePayload } from "@/lib/sharePayload";
-import { computeScore, gradeForScore, submitScore } from "@/lib/grade";
+import { computeScore, gradeForScore } from "@/lib/grade";
+import { recordRun, type RunOutcome } from "@/lib/progress";
 
 export default function ResultPage() {
   const router = useRouter();
   const [result, setResult] = useState<RunResult | null>(null);
-  const [record, setRecord] = useState<{ best: number; isNewRecord: boolean } | null>(
-    null,
-  );
-  // submitScore는 localStorage에 쓰는 부작용이 있어, StrictMode 이중 실행 시
-  // 두 번째 호출이 '신기록'을 덮어쓴다. 마운트당 한 번만 제출하도록 가드.
+  const [outcome, setOutcome] = useState<RunOutcome | null>(null);
+  // recordRun은 localStorage에 쓰는 부작용이 있어, StrictMode 이중 실행 시
+  // 두 번째 호출이 '신기록'·해금을 덮어쓴다. 마운트당 한 번만 기록하도록 가드.
   const submittedRef = useRef(false);
 
   useEffect(() => {
@@ -37,7 +36,7 @@ export default function ResultPage() {
       setResult(parsed);
       if (!submittedRef.current) {
         submittedRef.current = true;
-        setRecord(submitScore(parsed.score));
+        setOutcome(recordRun(parsed));
       }
     } catch {
       router.replace("/");
@@ -124,13 +123,13 @@ export default function ResultPage() {
             {result.score.toLocaleString()}
             <span className="text-lg font-bold text-panty-mute ml-1">점</span>
           </div>
-          {record?.isNewRecord ? (
+          {outcome?.isNewRecord ? (
             <div className="inline-block mt-2 text-xs font-extrabold text-panty-bg bg-panty-pink rounded-full px-3 py-1 animate-pulse">
               🎉 신기록!
             </div>
           ) : (
             <div className="mt-2 text-xs text-panty-mute">
-              최고 {record?.best.toLocaleString() ?? "-"}점
+              최고 {outcome?.best.toLocaleString() ?? "-"}점
             </div>
           )}
         </div>
@@ -146,6 +145,32 @@ export default function ResultPage() {
           <Stat label="코인" value={`${result.coins}`} />
           <Stat label="아슬" value={`${result.nearMisses}`} />
         </div>
+
+        {/* 신규 해금 연출 */}
+        {outcome && (outcome.newAchievements.length > 0 || outcome.newSkins.length > 0) && (
+          <div className="mt-5 border-t border-panty-bg pt-4 space-y-2">
+            {outcome.newAchievements.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center gap-2 text-sm bg-panty-bg rounded-lg px-3 py-2 text-left"
+              >
+                <span className="text-xl">{a.emoji}</span>
+                <span className="text-panty-mute text-xs">🏅 업적 달성</span>
+                <span className="font-bold text-panty-ink ml-auto">{a.title}</span>
+              </div>
+            ))}
+            {outcome.newSkins.map((sk) => (
+              <div
+                key={sk.id}
+                className="flex items-center gap-2 text-sm bg-panty-bg rounded-lg px-3 py-2 text-left"
+              >
+                <span className="text-xl">🩲</span>
+                <span className="text-panty-mute text-xs">🎨 새 스킨 해금</span>
+                <span className="font-bold text-panty-ink ml-auto">{sk.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex gap-3 mt-6 w-full max-w-md">

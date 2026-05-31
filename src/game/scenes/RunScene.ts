@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import type { GeneratedRunSetup } from "@/lib/types";
 import { computeScore } from "@/lib/grade";
+import { getEquippedSkinTint } from "@/lib/progress";
 
 export interface RunSceneData {
   setup: GeneratedRunSetup;
@@ -162,6 +163,9 @@ export class RunScene extends Phaser.Scene {
       .image(PLAYER_X, this.surfaceYAt(PLAYER_X) - FOOT_STAND, "tex_player")
       .setDepth(5);
     this.player.setDisplaySize(64, 64);
+    // 스킨: 색을 단색으로 채워(setTintFill) 또렷한 색상 빤쓰로. 기본(흰색)은 원래 이모지 유지.
+    const skinTint = getEquippedSkinTint();
+    if (skinTint !== 0xffffff) this.player.setTintFill(skinTint);
     this.physics.add.existing(this.player);
     this.playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     this.playerBody.setAllowGravity(false);
