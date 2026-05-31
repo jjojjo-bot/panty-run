@@ -64,7 +64,7 @@ export default function InputPage() {
             href="/shop"
             className="text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5 hover:text-panty-ink transition"
           >
-            🛒 상점 · 🪙{coins.toLocaleString()}
+            🛒 상점 · 🫧{coins.toLocaleString()}
           </Link>
         </div>
 

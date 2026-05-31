@@ -115,7 +115,7 @@ export default async function SharedResultPage({
         <div className="grid grid-cols-3 gap-2 text-xs text-panty-mute">
           <Stat label="생존" value={`${time}s`} />
           <Stat label="거리" value={`${distance}m`} />
-          <Stat label="코인" value={String(coins)} />
+          <Stat label="방울" value={String(coins)} />
         </div>
       </div>
 

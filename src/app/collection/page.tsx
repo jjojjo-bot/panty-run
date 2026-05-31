@@ -61,7 +61,7 @@ export default function CollectionPage() {
           <div className="grid grid-cols-4 gap-2 text-xs text-panty-mute">
             <Stat label="플레이" value={`${stats.totalRuns}`} />
             <Stat label="총 거리" value={`${stats.totalDistance.toLocaleString()}m`} />
-            <Stat label="총 코인" value={`${stats.totalCoins}`} />
+            <Stat label="총 방울" value={`${stats.totalCoins}`} />
             <Stat label="신기록" value={`${stats.newRecordCount}`} />
           </div>
         </div>

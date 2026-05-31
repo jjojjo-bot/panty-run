@@ -39,7 +39,7 @@ export default function ShopPage() {
     const r = buySkin(id);
     setStats(getStats());
     if (r.ok) flash(`${name} 구매 완료!`);
-    else if (r.reason === "insufficient") flash("코인이 부족해!");
+    else if (r.reason === "insufficient") flash("비누방울이 부족해!");
   }
 
   function equip(id: string) {
@@ -56,12 +56,12 @@ export default function ShopPage() {
           </Link>
           <h1 className="text-lg font-extrabold text-panty-pink">🛒 빤쓰 상점</h1>
           <span className="text-sm font-extrabold text-panty-ink">
-            🪙 {stats.coinBalance.toLocaleString()}
+            🫧 {stats.coinBalance.toLocaleString()}
           </span>
         </div>
 
         <p className="text-xs text-panty-mute mb-4 text-center">
-          도망치며 모은 코인으로 새 빤쓰를 사자
+          도망치며 모은 비누방울로 새 빤쓰를 사자
         </p>
 
         <div className="grid grid-cols-2 gap-3">
@@ -102,7 +102,7 @@ export default function ShopPage() {
                         : "bg-panty-bg text-panty-mute cursor-not-allowed"
                     }`}
                   >
-                    🪙 {sk.price?.toLocaleString()}
+                    🫧 {sk.price?.toLocaleString()}
                   </button>
                 )}
               </div>

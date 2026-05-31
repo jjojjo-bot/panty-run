@@ -24,6 +24,8 @@ const GRAVITY = 2000;
 const JUMP_V = -780;
 const BASE_SPEED = 360;
 const SPEED_RAMP = 14;
+const START_LIVES = 3; // 기본 생명 수
+const HIT_IFRAMES = 1.2; // 피격 후 무적 시간(초)
 
 // 내리막에서도 점프가 먹히게 하는 접지 보정값
 const COYOTE_TIME = 0.12; // 지면을 떠난 직후 점프 허용 유예(초)
@@ -40,7 +42,7 @@ const NEARMISS_GAP = 24; // 이 간격(px) 이내로 스쳐 지나가면 '아슬
 const STAND_SCALE = 64 / 96; // 서있는 플레이어 기본 스케일(텍스처 96 → 표시 64)
 
 const PLAYER_EMOJI = "🩲";
-const COIN_EMOJI = "🪙";
+const COIN_EMOJI = "🫧"; // 비누방울 (획득 재화)
 const FALLBACK_OBSTACLE_EMOJI = "❓";
 
 // 인게임 랜덤 대사 (가끔 플레이어 옆에 뜸)
@@ -88,11 +90,11 @@ const ITEM_LABEL: Record<ItemKind, string> = {
   gold: "🥇 점수 2배!",
   shield: "🛡️ 철벽!",
   propeller: "🪂 비행!",
-  magnet: "🧲 코인 자석!",
+  magnet: "🧲 비누방울 자석!",
   turtle: "🐢 슬로우!",
   rocket: "🚀 폭주!",
   coffee: "☕ 각성! 2단 점프",
-  jackpot: "🧧 코인 +15!",
+  jackpot: "🧧 비누방울 +15!",
   mine: "💩 으악, 지뢰!",
 };
 // 스폰 가중치 — 함정(mine)은 드물게, 나머지는 비슷하게
@@ -176,6 +178,8 @@ export class RunScene extends Phaser.Scene {
   private coinCount = 0;
   private nearMisses = 0;
   private speed = BASE_SPEED;
+  private baseSpeed = BASE_SPEED; // 생명 차감 시 되돌릴 초기 속도
+  private lives = START_LIVES;
   private alive = true;
   private isSliding = false;
   private slideTimer = 0;
@@ -218,6 +222,8 @@ export class RunScene extends Phaser.Scene {
     this.coinCount = 0;
     this.nearMisses = 0;
     this.speed = BASE_SPEED * (1 + (data.setup.intensity - 1) * 0.08);
+    this.baseSpeed = this.speed;
+    this.lives = START_LIVES;
     this.alive = true;
     this.isSliding = false;
     this.slideTimer = 0;
@@ -427,8 +433,9 @@ export class RunScene extends Phaser.Scene {
       }
     }
 
+    const lifeIcons = "🩲".repeat(Math.max(0, this.lives));
     this.scoreText.setText(
-      `🏆 ${this.liveScore()}   🏃 ${Math.round(this.distance)}m   🪙 ${this.coinCount}`,
+      `${lifeIcons}   🏆 ${this.liveScore()}   🏃 ${Math.round(this.distance)}m   🫧 ${this.coinCount}`,
     );
 
     // 활성 능력 표시
@@ -975,7 +982,22 @@ export class RunScene extends Phaser.Scene {
       this.smash(go);
       return;
     }
-    this.die();
+    this.loseLife(go);
+  }
+
+  /** 생명 1 차감 — 0이면 게임오버, 아니면 속도 초기화 + 짧은 무적 */
+  private loseLife(go: Phaser.GameObjects.Image) {
+    this.lives -= 1;
+    if (this.lives <= 0) {
+      this.die();
+      return;
+    }
+    this.smash(go); // 부딪힌 장애물 제거
+    this.speed = this.baseSpeed; // 속도 초기화로 숨통
+    this.invincibleTimer = Math.max(this.invincibleTimer, HIT_IFRAMES);
+    this.cameras.main.shake(180, 0.014);
+    this.cameras.main.flash(120, 255, 110, 110);
+    this.popText(this.player.x, this.player.y - 30, "빤쓰 -1 🩲", "#ff5a6a", true);
   }
 
   /** 장애물 파괴 연출 */

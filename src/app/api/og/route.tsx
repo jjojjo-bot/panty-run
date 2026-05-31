@@ -117,7 +117,7 @@ export async function GET(req: Request) {
         >
           <span style={{ display: "flex" }}>⏱ {time}s</span>
           <span style={{ display: "flex" }}>🏃 {distance}m</span>
-          <span style={{ display: "flex" }}>🪙 {coins}</span>
+          <span style={{ display: "flex" }}>🫧 {coins}</span>
         </div>
 
         <div

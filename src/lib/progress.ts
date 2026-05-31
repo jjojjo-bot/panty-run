@@ -78,7 +78,7 @@ const ACHIEVEMENT_DEFS: AchievementDef[] = [
   { id: "runs_50", emoji: "🦿", title: "도망 단골", desc: "50번 도망쳤다", test: (s) => s.totalRuns >= 50 },
   { id: "dist_1k", emoji: "🗺️", title: "천릿길", desc: "한 판에 1,000m 돌파", test: (s) => s.bestDistance >= 1000 },
   { id: "total_dist_10k", emoji: "🛣️", title: "마라토너", desc: "누적 10,000m 주파", test: (s) => s.totalDistance >= 10000 },
-  { id: "coins_50", emoji: "💰", title: "코인 부자", desc: "누적 코인 50개", test: (s) => s.totalCoins >= 50 },
+  { id: "coins_50", emoji: "🫧", title: "비누방울 부자", desc: "누적 비누방울 50개", test: (s) => s.totalCoins >= 50 },
   { id: "near_5", emoji: "😎", title: "아슬아슬의 달인", desc: "한 판에 아슬 5번", test: (s) => s.maxNearMissesInRun >= 5 },
   { id: "score_1k", emoji: "🔥", title: "네 자릿수", desc: "1,000점 돌파", test: (s) => s.bestScore >= 1000 },
   { id: "score_3k", emoji: "🏆", title: "고득점러", desc: "3,000점 돌파", test: (s) => s.bestScore >= 3000 },

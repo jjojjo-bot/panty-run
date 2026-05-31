@@ -143,7 +143,7 @@ export default function ResultPage() {
         <div className="grid grid-cols-4 gap-2 text-xs text-panty-mute">
           <Stat label="생존" value={`${Math.round(result.survivedSeconds)}s`} />
           <Stat label="거리" value={`${Math.round(result.distanceMeters)}m`} />
-          <Stat label="코인" value={`${result.coins}`} />
+          <Stat label="방울" value={`${result.coins}`} />
           <Stat label="아슬" value={`${result.nearMisses}`} />
         </div>
 
