@@ -6,6 +6,8 @@ export interface SharePayload {
   t: number;
   d: number;
   n: number;
+  s?: number; // score
+  g?: string; // grade title
 }
 
 export function encodeSharePayload(p: SharePayload): string {

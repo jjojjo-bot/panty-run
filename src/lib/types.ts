@@ -59,4 +59,6 @@ export interface RunResult {
   survivedSeconds: number;
   distanceMeters: number;
   coins: number;
+  nearMisses: number;
+  score: number;
 }

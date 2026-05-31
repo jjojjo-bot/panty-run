@@ -25,6 +25,8 @@ function buildOgUrl(p: Partial<SharePayload>): string {
   if (p.t !== undefined) params.set("t", String(p.t));
   if (p.d !== undefined) params.set("d", String(p.d));
   if (p.n !== undefined) params.set("n", String(p.n));
+  if (p.s !== undefined) params.set("s", String(p.s));
+  if (p.g) params.set("g", p.g);
   return `/api/og?${params.toString()}`;
 }
 
@@ -79,6 +81,8 @@ export default async function SharedResultPage({
   const time = payload.t ?? 0;
   const distance = payload.d ?? 0;
   const coins = payload.n ?? 0;
+  const score = payload.s;
+  const gradeTitle = payload.g;
 
   return (
     <main className="flex flex-col items-center justify-center min-h-dvh px-6 py-10">
@@ -94,7 +98,18 @@ export default async function SharedResultPage({
             &ldquo;{input}&rdquo;
           </div>
         )}
-        <div className="text-2xl font-extrabold my-4 leading-snug">
+        {gradeTitle && (
+          <div className="text-lg font-extrabold text-panty-ink mt-3">
+            {gradeTitle}
+          </div>
+        )}
+        {score !== undefined && (
+          <div className="text-3xl font-extrabold text-panty-pink mt-1">
+            {score.toLocaleString()}
+            <span className="text-base font-bold text-panty-mute ml-1">점</span>
+          </div>
+        )}
+        <div className="text-xl font-bold my-4 leading-snug text-panty-ink">
           {headline}
         </div>
         <div className="grid grid-cols-3 gap-2 text-xs text-panty-mute">

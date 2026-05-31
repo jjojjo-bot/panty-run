@@ -30,6 +30,8 @@ export async function GET(req: Request) {
   const time = searchParams.get("t") ?? "0";
   const distance = searchParams.get("d") ?? "0";
   const coins = searchParams.get("n") ?? "0";
+  const score = searchParams.get("s");
+  const grade = (searchParams.get("g") ?? "").slice(0, 20);
 
   const fontData = await loadFont(url.origin);
   const catEmoji = CATEGORY_EMOJI[category] ?? "🌧️";
@@ -63,19 +65,39 @@ export async function GET(req: Request) {
         <div
           style={{
             display: "flex",
-            marginTop: 40,
-            fontSize: 44,
+            marginTop: 36,
+            fontSize: 40,
             color: "#9b9baf",
           }}
         >
           &quot;{input}&quot;
         </div>
 
+        {grade && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 24,
+              marginTop: 20,
+            }}
+          >
+            <span style={{ fontSize: 52, fontWeight: 800, color: "#ffd84d" }}>
+              {grade}
+            </span>
+            {score && (
+              <span style={{ fontSize: 52, fontWeight: 800, color: "#ff5da2" }}>
+                {score}점
+              </span>
+            )}
+          </div>
+        )}
+
         <div
           style={{
             display: "flex",
-            marginTop: 28,
-            fontSize: 76,
+            marginTop: 20,
+            fontSize: 68,
             fontWeight: 800,
             lineHeight: 1.15,
             color: "#f4f4f6",

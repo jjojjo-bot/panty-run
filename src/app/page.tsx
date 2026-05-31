@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { analyzeInput } from "@/lib/analyzer";
 import { resolveSetup } from "@/lib/resolver";
+import { getBestScore, gradeForScore } from "@/lib/grade";
 
 const PRESETS = [
   "월요일 출근 너무 싫어",
@@ -16,6 +17,11 @@ const PRESETS = [
 export default function InputPage() {
   const router = useRouter();
   const [input, setInput] = useState("");
+  const [best, setBest] = useState(0);
+
+  useEffect(() => {
+    setBest(getBestScore());
+  }, []);
 
   function start() {
     const text = input.trim();
@@ -32,11 +38,17 @@ export default function InputPage() {
       <div className="w-full max-w-md flex flex-col items-center">
         <div className="text-6xl mb-2">🩲</div>
         <h1 className="text-3xl font-extrabold text-panty-pink mb-1">빤쓰런</h1>
-        <p className="text-panty-mute text-sm text-center mb-8">
+        <p className="text-panty-mute text-sm text-center mb-4">
           도망치고 싶은 순간을 적어.
           <br />
           빤쓰가 대신 달린다.
         </p>
+
+        {best > 0 && (
+          <div className="mb-6 text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5">
+            🏆 최고 {best.toLocaleString()}점 · {gradeForScore(best).title}
+          </div>
+        )}
 
         <textarea
           value={input}

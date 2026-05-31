@@ -5,7 +5,12 @@ import type { GeneratedRunSetup } from "@/lib/types";
 
 interface Props {
   setup: GeneratedRunSetup;
-  onGameOver: (stats: { time: number; distance: number; coins: number }) => void;
+  onGameOver: (stats: {
+    time: number;
+    distance: number;
+    coins: number;
+    nearMisses: number;
+  }) => void;
 }
 
 export default function PhaserGame({ setup, onGameOver }: Props) {
@@ -44,8 +49,12 @@ export default function PhaserGame({ setup, onGameOver }: Props) {
       gameRef.current = game;
       game.scene.start("RunScene", {
         setup: setupRef.current,
-        onGameOver: (s: { time: number; distance: number; coins: number }) =>
-          onGameOverRef.current(s),
+        onGameOver: (s: {
+          time: number;
+          distance: number;
+          coins: number;
+          nearMisses: number;
+        }) => onGameOverRef.current(s),
       });
     })();
     return () => {

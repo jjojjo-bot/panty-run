@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GeneratedRunSetup, RunResult } from "@/lib/types";
+import { computeScore } from "@/lib/grade";
 
 const PhaserGame = dynamic(() => import("@/game/PhaserGame"), { ssr: false });
 
@@ -25,13 +26,25 @@ export default function PlayPage() {
   }, [router]);
 
   const onGameOver = useCallback(
-    (stats: { time: number; distance: number; coins: number }) => {
+    (stats: {
+      time: number;
+      distance: number;
+      coins: number;
+      nearMisses: number;
+    }) => {
       if (!setup) return;
+      const score = computeScore({
+        distance: stats.distance,
+        coins: stats.coins,
+        nearMisses: stats.nearMisses,
+      });
       const result: RunResult = {
         setup,
         survivedSeconds: stats.time,
         distanceMeters: stats.distance,
         coins: stats.coins,
+        nearMisses: stats.nearMisses,
+        score,
       };
       sessionStorage.setItem("panty_run_result", JSON.stringify(result));
       router.push("/result");
