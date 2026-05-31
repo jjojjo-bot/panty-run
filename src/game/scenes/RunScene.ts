@@ -168,6 +168,7 @@ export class RunScene extends Phaser.Scene {
   private items!: Phaser.Physics.Arcade.Group;
   private scoreText!: Phaser.GameObjects.Text;
   private effectText!: Phaser.GameObjects.Text;
+  private centerFx!: Phaser.GameObjects.Text; // 화면 중앙 큰 효과 표시
   private introText!: Phaser.GameObjects.Text;
 
   private setup!: GeneratedRunSetup;
@@ -337,6 +338,22 @@ export class RunScene extends Phaser.Scene {
       })
       .setDepth(1000);
 
+    // 화면 중앙 큰 효과 표시 (깜빡임)
+    this.centerFx = this.add
+      .text(GAME_W / 2, 150, "", {
+        fontSize: "34px",
+        color: "#ffffff",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontStyle: "bold",
+        align: "center",
+        stroke: "#000000",
+        strokeThickness: 6,
+        lineSpacing: 6,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(900);
+
     const hint = this.add
       .text(
         GAME_W / 2,
@@ -450,6 +467,25 @@ export class RunScene extends Phaser.Scene {
     if (this.mineTimer > 0) fx.push(`💩${Math.ceil(this.mineTimer)}`);
     if (this.shield) fx.push("🛡️");
     this.effectText.setText(fx.join("   "));
+
+    // 화면 중앙 큰 표시 (아이템명 + 남은 시간, 깜빡임)
+    const lines: string[] = [];
+    if (this.rocketTimer > 0) lines.push(`🚀 폭주 ${Math.ceil(this.rocketTimer)}`);
+    else if (this.flying) lines.push(`🪂 비행 ${Math.ceil(this.flyTimer)}`);
+    else if (this.invincibleTimer > 0) lines.push(`😇 무적 ${Math.ceil(this.invincibleTimer)}`);
+    if (this.multTimer > 0) lines.push(`🥇 점수 2배 ${Math.ceil(this.multTimer)}`);
+    if (this.coffeeTimer > 0) lines.push(`☕ 2단 점프 ${Math.ceil(this.coffeeTimer)}`);
+    if (this.magnetTimer > 0) lines.push(`🧲 비누방울 자석 ${Math.ceil(this.magnetTimer)}`);
+    if (this.slowTimer > 0) lines.push(`🐢 슬로우 ${Math.ceil(this.slowTimer)}`);
+    if (this.mineTimer > 0) lines.push(`💩 지뢰! ${Math.ceil(this.mineTimer)}`);
+    if (this.shield) lines.push("🛡️ 철벽");
+    if (lines.length > 0) {
+      this.centerFx.setText(lines.join("\n"));
+      this.centerFx.setAlpha(0.45 + 0.55 * Math.abs(Math.sin(this.elapsed * 9)));
+    } else {
+      this.centerFx.setText("");
+      this.centerFx.setAlpha(0);
+    }
   }
 
   /** 현재 점수 (거리+코인+아슬 + 점수2배 보너스) */
@@ -965,6 +1001,16 @@ export class RunScene extends Phaser.Scene {
     });
     if (bad) this.cameras.main.flash(150, 150, 90, 40);
     else this.cameras.main.flash(120, 255, 220, 130);
+
+    // 중앙 표시 스케일 팝(획득 강조)
+    this.tweens.killTweensOf(this.centerFx);
+    this.centerFx.setScale(1.5);
+    this.tweens.add({
+      targets: this.centerFx,
+      scale: 1,
+      duration: 320,
+      ease: "Back.easeOut",
+    });
   }
 
   /** 장애물 충돌 처리 — 무적/비행/실드면 부수고, 아니면 사망 */
