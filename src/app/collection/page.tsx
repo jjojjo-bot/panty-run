@@ -12,6 +12,7 @@ import {
   tintToHex,
   type Stats,
 } from "@/lib/progress";
+import { PantyIcon } from "@/components/PantyIcon";
 
 export default function CollectionPage() {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -116,21 +117,18 @@ export default function CollectionPage() {
                       : "bg-panty-panel/40 cursor-not-allowed"
                 }`}
               >
-                <span
-                  className="text-3xl leading-none"
-                  style={
-                    got && sk.tint !== 0xffffff
-                      ? { filter: `drop-shadow(0 0 0 ${tintToHex(sk.tint)})` }
-                      : undefined
-                  }
-                >
-                  {got ? "🩲" : "🔒"}
-                </span>
-                {/* 색상 칩으로 스킨 색을 명확히 표시 */}
-                <span
-                  className="mt-1 h-2 w-8 rounded-full"
-                  style={{ backgroundColor: tintToHex(sk.tint), opacity: got ? 1 : 0.25 }}
-                />
+                {got && sk.type ? (
+                  <PantyIcon type={sk.type} tint={sk.tint} size={40} />
+                ) : (
+                  <span className="text-3xl leading-none">{got ? "🩲" : "🔒"}</span>
+                )}
+                {/* 색상 스킨은 색 칩으로 표시 */}
+                {!sk.type && (
+                  <span
+                    className="mt-1 h-2 w-8 rounded-full"
+                    style={{ backgroundColor: tintToHex(sk.tint), opacity: got ? 1 : 0.25 }}
+                  />
+                )}
                 <span className={`text-[11px] font-bold mt-1 ${got ? "text-panty-ink" : "text-panty-mute"}`}>
                   {sk.name.replace(" 빤쓰", "")}
                 </span>

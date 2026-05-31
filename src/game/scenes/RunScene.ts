@@ -1,7 +1,8 @@
 import Phaser from "phaser";
 import type { GeneratedRunSetup } from "@/lib/types";
 import { computeScore } from "@/lib/grade";
-import { getEquippedSkinTint } from "@/lib/progress";
+import { getEquippedSkin, tintToHex } from "@/lib/progress";
+import { drawPanty } from "@/lib/pantyArt";
 
 export interface RunSceneData {
   setup: GeneratedRunSetup;
@@ -266,9 +267,15 @@ export class RunScene extends Phaser.Scene {
       .image(PLAYER_X, this.surfaceYAt(PLAYER_X) - FOOT_STAND, "tex_player")
       .setDepth(5);
     this.player.setDisplaySize(64, 64);
-    // 스킨: 색을 단색으로 채워(setTintFill) 또렷한 색상 빤쓰로. 기본(흰색)은 원래 이모지 유지.
-    const skinTint = getEquippedSkinTint();
-    if (skinTint !== 0xffffff) this.player.setTintFill(skinTint);
+    // 스킨 적용: 종류 스킨은 직접 그린 텍스처, 색상 스킨은 이모지 틴트.
+    const skin = getEquippedSkin();
+    if (skin.type) {
+      this.makeSkinTexture("tex_skin", skin.type, tintToHex(skin.tint));
+      this.player.setTexture("tex_skin");
+      this.player.setDisplaySize(64, 64);
+    } else if (skin.tint !== 0xffffff) {
+      this.player.setTintFill(skin.tint);
+    }
     this.physics.add.existing(this.player);
     this.playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     this.playerBody.setAllowGravity(false);
@@ -1005,6 +1012,15 @@ export class RunScene extends Phaser.Scene {
       const emoji = OBSTACLE_EMOJI[id] ?? FALLBACK_OBSTACLE_EMOJI;
       this.makeEmojiTexture(`tex_${id}`, emoji, 96);
     }
+  }
+
+  /** 종류 스킨용 — 직접 그린 빤쓰 텍스처 */
+  private makeSkinTexture(key: string, type: Parameters<typeof drawPanty>[2], colorHex: string) {
+    if (this.textures.exists(key)) this.textures.remove(key);
+    const tex = this.textures.createCanvas(key, 96, 96);
+    if (!tex) return;
+    drawPanty(tex.getContext(), 96, type, colorHex);
+    tex.refresh();
   }
 
   private makeEmojiTexture(key: string, emoji: string, size: number) {

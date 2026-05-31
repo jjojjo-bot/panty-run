@@ -8,9 +8,9 @@ import {
   getStats,
   isSkinUnlocked,
   setEquippedSkin,
-  tintToHex,
   type Stats,
 } from "@/lib/progress";
+import { PantyIcon } from "@/components/PantyIcon";
 
 const SHOP_SKINS = SKINS.filter((s) => s.price !== undefined);
 
@@ -71,11 +71,11 @@ export default function ShopPage() {
             const afford = stats.coinBalance >= (sk.price ?? 0);
             return (
               <div key={sk.id} className="bg-panty-panel rounded-2xl p-4 flex flex-col items-center">
-                <span className="text-4xl leading-none">🩲</span>
-                <span
-                  className="mt-2 h-3 w-12 rounded-full"
-                  style={{ backgroundColor: tintToHex(sk.tint) }}
-                />
+                {sk.type ? (
+                  <PantyIcon type={sk.type} tint={sk.tint} size={56} />
+                ) : (
+                  <span className="text-4xl leading-none">🩲</span>
+                )}
                 <span className="text-sm font-bold text-panty-ink mt-2">
                   {sk.name.replace(" 빤쓰", "")}
                 </span>

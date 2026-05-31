@@ -1,6 +1,7 @@
 // 성장·보상 단일 소스 — 누적 통계, 업적, 스킨(빤쓰 색상) 해금/장착.
 // 전부 localStorage 기반 (백엔드 없음). SSR 안전 가드 포함.
 import type { RunResult } from "./types";
+import type { PantyType } from "./pantyArt";
 
 const STATS_KEY = "panty_run_stats";
 const LEGACY_BEST_KEY = "panty_run_best"; // 이전 버전 최고점수 — 마이그레이션용
@@ -34,9 +35,10 @@ export interface Achievement {
 export interface Skin {
   id: string;
   name: string;
-  tint: number; // 0xRRGGBB (0xffffff = 원래 색)
+  tint: number; // 색상 스킨: 🩲 이모지 틴트 / 종류 스킨: 원단 색
   achievementId: string | null; // 업적으로 해금되는 스킨이면 업적 id
   price?: number; // 코인 상점 구매가 (있으면 상점 전용)
+  type?: PantyType; // 있으면 이모지 대신 직접 그린 '종류' 빤쓰
 }
 
 function defaultStats(): Stats {
@@ -107,12 +109,28 @@ export const SKINS: Skin[] = [
   { id: "neon", name: "네온 빤쓰", tint: 0x9eff3d, achievementId: "item_collector" },
   { id: "flame", name: "불꽃 빤쓰", tint: 0xff7a1a, achievementId: "rocket_5" },
   { id: "poop", name: "똥색 빤쓰", tint: 0x8b5a2b, achievementId: "mine_step" },
-  // 코인 상점 전용 스킨
-  { id: "obsidian", name: "흑요석 빤쓰", tint: 0x3a3a4d, achievementId: null, price: 50 },
-  { id: "coral", name: "코랄 빤쓰", tint: 0xff7f6e, achievementId: null, price: 80 },
-  { id: "lavender", name: "라벤더 빤쓰", tint: 0xc9a0ff, achievementId: null, price: 120 },
-  { id: "teal", name: "청록 빤쓰", tint: 0x00c2c7, achievementId: null, price: 160 },
-  { id: "diamond", name: "다이아 빤쓰", tint: 0xb9f2ff, achievementId: null, price: 300 },
+  // 코인 상점 전용 — 색이 아니라 '종류'가 다른 빤쓰 (직접 그림)
+  { id: "holey", name: "구멍난 빤쓰", tint: 0x9a9aa5, type: "holey", achievementId: null, price: 40 },
+  { id: "thong", name: "끈 빤쓰", tint: 0xff5fa2, type: "thong", achievementId: null, price: 90 },
+  { id: "boxer", name: "트렁크 빤쓰", tint: 0x4a6fd0, type: "boxer", achievementId: null, price: 140 },
+  { id: "heart_p", name: "하트 빤쓰", tint: 0xff8aa8, type: "heart", achievementId: null, price: 200 },
+  { id: "luxury", name: "명품 빤쓰", tint: 0x23232e, type: "luxury", achievementId: null, price: 350 },
+  { id: "patched", name: "기운 빤쓰", tint: 0xcdb89a, type: "patched", achievementId: null, price: 60 },
+  { id: "prison", name: "죄수 빤쓰", tint: 0x2f3140, type: "prison", achievementId: null, price: 100 },
+  { id: "leopard", name: "호피 빤쓰", tint: 0xd8a24a, type: "leopard", achievementId: null, price: 180 },
+  { id: "rainbow", name: "무지개 빤쓰", tint: 0xff66cc, type: "rainbow", achievementId: null, price: 280 },
+  { id: "hero", name: "히어로 빤쓰", tint: 0x3a5bd0, type: "hero", achievementId: null, price: 320 },
+  // 2026 트렌드 반영 (최신 유행 검색)
+  { id: "butterddeok", name: "버터떡 빤쓰", tint: 0xf3ecd9, type: "butterddeok", achievementId: null, price: 90 },
+  { id: "strawberry", name: "딸기 빤쓰", tint: 0xff4d5e, type: "strawberry", achievementId: null, price: 100 },
+  { id: "bubbletea", name: "버블티 빤쓰", tint: 0xcaa46a, type: "bubbletea", achievementId: null, price: 110 },
+  { id: "jelly", name: "젤리 빤쓰", tint: 0xff5a8a, type: "jelly", achievementId: null, price: 120 },
+  { id: "blindbox", name: "랜덤박스 빤쓰", tint: 0xb98cff, type: "blindbox", achievementId: null, price: 130 },
+  { id: "chillguy", name: "칠가이 빤쓰", tint: 0xe0a86b, type: "chillguy", achievementId: null, price: 140 },
+  { id: "dubai", name: "두바이 빤쓰", tint: 0x5b3a1e, type: "dubai", achievementId: null, price: 160 },
+  { id: "godsaeng", name: "갓생 빤쓰", tint: 0x2e8b57, type: "godsaeng", achievementId: null, price: 170 },
+  { id: "puppy", name: "댕댕이 빤쓰", tint: 0xd9b38c, type: "puppy", achievementId: null, price: 190 },
+  { id: "ai", name: "AI 빤쓰", tint: 0x14202b, type: "ai", achievementId: null, price: 230 },
 ];
 
 export function tintToHex(tint: number): string {
@@ -248,10 +266,15 @@ export function setEquippedSkin(skinId: string): void {
   saveStats(s);
 }
 
-/** 게임에서 플레이어에 적용할 틴트 (장착 스킨이 잠겨있으면 기본색). */
-export function getEquippedSkinTint(): number {
+/** 장착 스킨 객체 (잠겨있거나 없으면 기본 스킨). */
+export function getEquippedSkin(): Skin {
   const s = getStats();
   const skin = SKINS.find((sk) => sk.id === s.equippedSkin);
-  if (!skin || !isSkinUnlocked(skin, s)) return 0xffffff;
-  return skin.tint;
+  if (!skin || !isSkinUnlocked(skin, s)) return SKINS[0];
+  return skin;
+}
+
+/** 게임에서 플레이어에 적용할 틴트 (색상 스킨용; 종류 스킨은 getEquippedSkin 사용). */
+export function getEquippedSkinTint(): number {
+  return getEquippedSkin().tint;
 }
