@@ -48,6 +48,11 @@ const QUIPS = [
   "빤쓰 파이팅",
   "못 잡지롱~",
   "도망은 실력이야",
+  "현타 오기 전에 튀자",
+  "오히려 좋아",
+  "이게 갓생이지",
+  "존버 중...",
+  "럭키비키🍀",
 ];
 
 const OBSTACLE_EMOJI: Record<string, string> = {
