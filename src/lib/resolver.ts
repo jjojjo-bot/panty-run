@@ -59,12 +59,21 @@ export function resolveSetup(
 
 export function renderResultText(
   template: string,
-  vars: { time: number; distance: number; coins: number; input: string },
+  vars: {
+    time: number;
+    distance: number;
+    coins: number;
+    input: string;
+    near?: number;
+    score?: number;
+  },
 ): string {
   return fillTemplate(template, {
     time: String(Math.round(vars.time)),
     distance: String(Math.round(vars.distance)),
     coins: String(vars.coins),
+    near: String(vars.near ?? 0),
+    score: String(vars.score ?? 0),
     input: vars.input,
   });
 }

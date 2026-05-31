@@ -58,6 +58,8 @@ export default function ResultPage() {
     distance: result.distanceMeters,
     coins: result.coins,
     input: result.setup.inputText,
+    near: result.nearMisses,
+    score: result.score,
   });
 
   function openImageCard() {
