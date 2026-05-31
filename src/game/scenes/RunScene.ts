@@ -27,6 +27,14 @@ const SPEED_RAMP = 14;
 const START_LIVES = 3; // 기본 생명 수
 const HIT_IFRAMES = 1.2; // 피격 후 무적 시간(초)
 
+// 콤보 & 피버
+const FEVER_MAX = 100; // 피버 게이지 최대
+const FEVER_DUR = 7; // 피버 지속(초)
+const GAUGE_BUBBLE = 7; // 비누방울 1개당 게이지
+const GAUGE_NEAR = 12; // 아슬 1회당 게이지
+const FEVER_SPEED = 1.25; // 피버 중 가속
+const HIT_GAUGE_PENALTY = 35; // 피격 시 게이지 감소
+
 // 내리막에서도 점프가 먹히게 하는 접지 보정값
 const COYOTE_TIME = 0.12; // 지면을 떠난 직후 점프 허용 유예(초)
 const GROUND_SNAP = 36; // 점프 중이 아닐 때 이 간격 이내면 지형에 붙임(px)
@@ -210,6 +218,14 @@ export class RunScene extends Phaser.Scene {
   private itemTimer = 0; // 다음 아이템 등장까지
   private itemCounts: Record<string, number> = {}; // 이번 판 아이템 획득 집계
 
+  // 콤보 & 피버
+  private combo = 0;
+  private feverGauge = 0;
+  private fever = false;
+  private feverTimer = 0;
+  private feverBar!: Phaser.GameObjects.Graphics;
+  private feverOverlay!: Phaser.GameObjects.Rectangle;
+
   private streaks: { x: number; y: number; len: number }[] = [];
 
   constructor() {
@@ -250,6 +266,10 @@ export class RunScene extends Phaser.Scene {
     this.bonusScore = 0;
     this.itemTimer = 10;
     this.itemCounts = {};
+    this.combo = 0;
+    this.feverGauge = 0;
+    this.fever = false;
+    this.feverTimer = 0;
   }
 
   create() {
@@ -361,6 +381,14 @@ export class RunScene extends Phaser.Scene {
       .setAlpha(0)
       .setDepth(900);
 
+    // 피버 화면 오버레이(무지개 번쩍) + 게이지 바
+    this.feverOverlay = this.add
+      .rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0xff7a1a)
+      .setDepth(800)
+      .setAlpha(0)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.feverBar = this.add.graphics().setDepth(1000);
+
     const hint = this.add
       .text(
         GAME_W / 2,
@@ -397,12 +425,16 @@ export class RunScene extends Phaser.Scene {
     // 속도 보정: 거북이(슬로우) ↓, 로켓·지뢰 ↑
     const slow = this.slowTimer > 0 ? SLOW_FACTOR : 1;
     const boost =
-      (this.rocketTimer > 0 ? ROCKET_BOOST : 1) * (this.mineTimer > 0 ? MINE_BOOST : 1);
+      (this.rocketTimer > 0 ? ROCKET_BOOST : 1) *
+      (this.mineTimer > 0 ? MINE_BOOST : 1) *
+      (this.fever ? FEVER_SPEED : 1);
     const effSpeed = this.speed * slow * boost;
     this.distance += effSpeed * dt * 0.1;
     this.worldScroll += effSpeed * dt;
     // 황금(점수 2배) — 적용 중 벌어들인 거리만큼 보너스 추가
     if (this.multTimer > 0) this.bonusScore += effSpeed * dt * 0.1;
+    // 피버 — 거리 점수 3배(기본 1 + 보너스 2)
+    if (this.fever) this.bonusScore += effSpeed * dt * 0.1 * 2;
 
     // 효과 타이머 감소
     if (this.invincibleTimer > 0) this.invincibleTimer -= dt;
@@ -415,6 +447,18 @@ export class RunScene extends Phaser.Scene {
     if (this.flying) {
       this.flyTimer -= dt;
       if (this.flyTimer <= 0) this.flying = false;
+    }
+    if (this.fever) {
+      this.feverTimer -= dt;
+      if (this.feverTimer <= 0) this.endFever();
+    }
+    this.drawFeverBar();
+    this.feverOverlay.setAlpha(
+      this.fever ? 0.1 + 0.09 * Math.abs(Math.sin(this.elapsed * 14)) : 0,
+    );
+    if (this.fever) {
+      const hues = [0xff7a1a, 0xff3b8b, 0xffd84d, 0x3bb0ff];
+      this.feverOverlay.setFillStyle(hues[Math.floor(this.elapsed * 8) % hues.length]);
     }
 
     this.drawBackground();
@@ -459,8 +503,9 @@ export class RunScene extends Phaser.Scene {
     }
 
     const lifeIcons = "🩲".repeat(Math.max(0, this.lives));
+    const comboStr = this.combo >= 2 ? `   🔥x${this.combo}` : "";
     this.scoreText.setText(
-      `${lifeIcons}   🏆 ${this.liveScore()}   🏃 ${Math.round(this.distance)}m   🫧 ${this.coinCount}`,
+      `${lifeIcons}   🏆 ${this.liveScore()}   🏃 ${Math.round(this.distance)}m   🫧 ${this.coinCount}${comboStr}`,
     );
 
     // 활성 능력 표시
@@ -478,6 +523,7 @@ export class RunScene extends Phaser.Scene {
 
     // 화면 중앙 큰 표시 (아이템명 + 남은 시간, 깜빡임)
     const lines: string[] = [];
+    if (this.fever) lines.push(`🔥 피버!! x3  ${Math.ceil(this.feverTimer)}`);
     if (this.rocketTimer > 0) lines.push(`🚀 폭주 ${Math.ceil(this.rocketTimer)}`);
     else if (this.flying) lines.push(`🪂 비행 ${Math.ceil(this.flyTimer)}`);
     else if (this.invincibleTimer > 0) lines.push(`😇 무적 ${Math.ceil(this.invincibleTimer)}`);
@@ -682,6 +728,7 @@ export class RunScene extends Phaser.Scene {
         if (gap > 0 && gap < NEARMISS_GAP) {
           this.nearMisses += 1;
           if (this.multTimer > 0) this.bonusScore += 25; // 점수 2배: 아슬 추가분
+          this.addCombo(true);
           this.popText(PLAYER_X, pb.top - 18, "아슬!", "#ff5fa2");
         }
       }
@@ -690,7 +737,7 @@ export class RunScene extends Phaser.Scene {
   }
 
   private updateCoins() {
-    const magnet = this.magnetTimer > 0;
+    const magnet = this.magnetTimer > 0 || this.fever; // 피버 중 자동 흡입
     this.coins.getChildren().forEach((obj) => {
       const go = obj as Phaser.GameObjects.Image;
       const worldX = go.getData("worldX") as number;
@@ -814,6 +861,8 @@ export class RunScene extends Phaser.Scene {
     coin.destroy();
     this.coinCount += 1;
     if (this.multTimer > 0) this.bonusScore += 10; // 점수 2배: 코인 추가분
+    if (this.fever) this.bonusScore += 10; // 피버 보너스
+    this.addCombo(false);
     this.popText(x, y, "+1", "#ffd84d");
     const ring = this.add
       .circle(x, y, 6, 0xffd84d, 0)
@@ -1025,7 +1074,7 @@ export class RunScene extends Phaser.Scene {
   private hitObstacle(obj: Phaser.GameObjects.GameObject) {
     if (!this.alive) return;
     const go = obj as Phaser.GameObjects.Image;
-    if (this.flying || this.invincibleTimer > 0) {
+    if (this.flying || this.invincibleTimer > 0 || this.fever) {
       this.smash(go);
       return;
     }
@@ -1049,6 +1098,8 @@ export class RunScene extends Phaser.Scene {
     this.smash(go); // 부딪힌 장애물 제거
     this.speed = this.baseSpeed; // 속도 초기화로 숨통
     this.invincibleTimer = Math.max(this.invincibleTimer, HIT_IFRAMES);
+    this.combo = 0; // 콤보 끊김
+    this.feverGauge = Math.max(0, this.feverGauge - HIT_GAUGE_PENALTY);
     // 빤쓰 낡음 단계 갱신 (생명 2 → 1단계, 1 → 2단계)
     this.playerDmg.setTexture(this.lives === 2 ? "tex_dmg1" : "tex_dmg2");
     this.playerDmg.setVisible(true);
@@ -1137,6 +1188,49 @@ export class RunScene extends Phaser.Scene {
       ctx.stroke();
     }
     tex.refresh();
+  }
+
+  /** 콤보 1 증가 + 피버 게이지 충전 */
+  private addCombo(near: boolean) {
+    this.combo += 1;
+    if (!this.fever) {
+      this.feverGauge = Math.min(FEVER_MAX, this.feverGauge + (near ? GAUGE_NEAR : GAUGE_BUBBLE));
+      if (this.feverGauge >= FEVER_MAX) this.startFever();
+    }
+    if (this.combo > 0 && this.combo % 5 === 0) {
+      this.popText(this.player.x, this.player.y - 48, `${this.combo} COMBO!`, "#ffd84d", true);
+    }
+  }
+
+  private startFever() {
+    this.fever = true;
+    this.feverTimer = FEVER_DUR;
+    this.cameras.main.shake(250, 0.016);
+    this.cameras.main.flash(220, 255, 180, 60);
+    this.popText(GAME_W / 2, 220, "🔥 FEVER! 🔥", "#ffd84d", true);
+  }
+
+  private endFever() {
+    this.fever = false;
+    this.feverGauge = 0;
+  }
+
+  /** 피버 게이지/타이머 바 (상단 중앙) */
+  private drawFeverBar() {
+    const g = this.feverBar;
+    g.clear();
+    const w = 180;
+    const h = 12;
+    const x = GAME_W / 2 - w / 2;
+    const y = 12;
+    g.fillStyle(0x000000, 0.45);
+    g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 6);
+    const ratio = this.fever ? this.feverTimer / FEVER_DUR : this.feverGauge / FEVER_MAX;
+    const col = this.fever ? 0xff3b3b : this.feverGauge >= FEVER_MAX ? 0xffd84d : 0xff7a1a;
+    if (ratio > 0) {
+      g.fillStyle(col, 1);
+      g.fillRoundedRect(x, y, Math.max(4, w * Phaser.Math.Clamp(ratio, 0, 1)), h, 5);
+    }
   }
 
   /** 낡음 오버레이를 플레이어 변형에 맞춰 동기화 */
