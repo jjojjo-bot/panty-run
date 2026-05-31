@@ -10,6 +10,7 @@ interface Props {
     distance: number;
     coins: number;
     nearMisses: number;
+    score: number;
   }) => void;
 }
 
@@ -54,6 +55,7 @@ export default function PhaserGame({ setup, onGameOver }: Props) {
           distance: number;
           coins: number;
           nearMisses: number;
+          score: number;
         }) => onGameOverRef.current(s),
       });
     })();

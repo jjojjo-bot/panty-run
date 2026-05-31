@@ -10,6 +10,7 @@ export interface RunSceneData {
     distance: number;
     coins: number;
     nearMisses: number;
+    score: number;
   }) => void;
 }
 
@@ -56,6 +57,75 @@ const QUIPS = [
   "이왜진?!",
 ];
 
+// ── 빤쓰 능력 아이템 ──────────────────────────────────────────
+type ItemKind =
+  | "angel"
+  | "gold"
+  | "shield"
+  | "propeller"
+  | "magnet"
+  | "turtle"
+  | "rocket"
+  | "coffee"
+  | "jackpot"
+  | "mine";
+const ITEM_EMOJI: Record<ItemKind, string> = {
+  angel: "😇", // 무적
+  gold: "🥇", // 점수 2배
+  shield: "🛡️", // 1회 방어
+  propeller: "🪂", // 비행
+  magnet: "🧲", // 코인 흡입
+  turtle: "🐢", // 슬로우
+  rocket: "🚀", // 폭주(가속+무적)
+  coffee: "☕", // 각성(2단 점프)
+  jackpot: "🧧", // 복주머니(즉시 코인)
+  mine: "💩", // 함정(통제불능 가속)
+};
+const ITEM_LABEL: Record<ItemKind, string> = {
+  angel: "😇 무적!",
+  gold: "🥇 점수 2배!",
+  shield: "🛡️ 철벽!",
+  propeller: "🪂 비행!",
+  magnet: "🧲 코인 자석!",
+  turtle: "🐢 슬로우!",
+  rocket: "🚀 폭주!",
+  coffee: "☕ 각성! 2단 점프",
+  jackpot: "🧧 코인 +15!",
+  mine: "💩 으악, 지뢰!",
+};
+// 스폰 가중치 — 함정(mine)은 드물게, 나머지는 비슷하게
+const ITEM_WEIGHTS: Record<ItemKind, number> = {
+  angel: 3,
+  gold: 3,
+  shield: 3,
+  propeller: 3,
+  magnet: 3,
+  turtle: 3,
+  rocket: 2,
+  coffee: 2,
+  jackpot: 2,
+  mine: 1,
+};
+const ITEM_KINDS = Object.keys(ITEM_EMOJI) as ItemKind[]; // 텍스처 생성용 전체 목록
+const ITEM_POOL: ItemKind[] = (Object.keys(ITEM_WEIGHTS) as ItemKind[]).flatMap(
+  (k) => Array<ItemKind>(ITEM_WEIGHTS[k]).fill(k),
+); // 가중치 적용 스폰 풀
+
+const DUR_INVINCIBLE = 5;
+const DUR_GOLD = 8;
+const DUR_FLY = 5;
+const DUR_MAGNET = 8;
+const DUR_SLOW = 5;
+const DUR_ROCKET = 3;
+const DUR_COFFEE = 7;
+const DUR_MINE = 2.5;
+const SLOW_FACTOR = 0.55;
+const ROCKET_BOOST = 1.8;
+const MINE_BOOST = 1.35;
+const COFFEE_JUMP_V = -980; // 각성 시 강화 점프
+const JACKPOT_COINS = 15;
+const MAGNET_RADIUS = 240;
+
 const OBSTACLE_EMOJI: Record<string, string> = {
   obs_document: "📄",
   obs_boss: "👔",
@@ -91,7 +161,9 @@ export class RunScene extends Phaser.Scene {
   private speedGfx!: Phaser.GameObjects.Graphics;
   private obstacles!: Phaser.Physics.Arcade.Group;
   private coins!: Phaser.Physics.Arcade.Group;
+  private items!: Phaser.Physics.Arcade.Group;
   private scoreText!: Phaser.GameObjects.Text;
+  private effectText!: Phaser.GameObjects.Text;
   private introText!: Phaser.GameObjects.Text;
 
   private setup!: GeneratedRunSetup;
@@ -113,6 +185,21 @@ export class RunScene extends Phaser.Scene {
   private jumping = false;
   private coyote = 0;
   private quipTimer = 0;
+
+  // 능력 아이템 효과 상태
+  private invincibleTimer = 0; // 무적(천사)
+  private multTimer = 0; // 점수 2배(황금)
+  private magnetTimer = 0; // 코인 자석
+  private slowTimer = 0; // 슬로우(거북이)
+  private flying = false; // 비행(프로펠러)
+  private flyTimer = 0;
+  private shield = false; // 1회 방어(철벽)
+  private rocketTimer = 0; // 로켓 폭주(가속+무적)
+  private coffeeTimer = 0; // 카페인(2단 점프)
+  private mineTimer = 0; // 지뢰(통제불능 가속)
+  private airJumpUsed = false; // 공중 2단 점프 사용 여부
+  private bonusScore = 0; // 점수 2배 동안 쌓은 추가 점수
+  private itemTimer = 0; // 다음 아이템 등장까지
 
   private streaks: { x: number; y: number; len: number }[] = [];
 
@@ -138,6 +225,19 @@ export class RunScene extends Phaser.Scene {
     this.jumping = false;
     this.coyote = 0;
     this.quipTimer = 3;
+    this.invincibleTimer = 0;
+    this.multTimer = 0;
+    this.magnetTimer = 0;
+    this.slowTimer = 0;
+    this.flying = false;
+    this.flyTimer = 0;
+    this.shield = false;
+    this.rocketTimer = 0;
+    this.coffeeTimer = 0;
+    this.mineTimer = 0;
+    this.airJumpUsed = false;
+    this.bonusScore = 0;
+    this.itemTimer = 10;
   }
 
   create() {
@@ -174,10 +274,16 @@ export class RunScene extends Phaser.Scene {
 
     this.obstacles = this.physics.add.group({ allowGravity: false, immovable: true });
     this.coins = this.physics.add.group({ allowGravity: false });
+    this.items = this.physics.add.group({ allowGravity: false });
 
-    this.physics.add.overlap(this.player, this.obstacles, () => this.die());
+    this.physics.add.overlap(this.player, this.obstacles, (_p, o) =>
+      this.hitObstacle(o as Phaser.GameObjects.GameObject),
+    );
     this.physics.add.overlap(this.player, this.coins, (_p, c) =>
       this.collectCoin(c as Phaser.GameObjects.Image),
+    );
+    this.physics.add.overlap(this.player, this.items, (_p, it) =>
+      this.collectItem(it as Phaser.GameObjects.GameObject),
     );
 
     this.introText = this.add
@@ -202,6 +308,16 @@ export class RunScene extends Phaser.Scene {
         fontSize: "16px",
         color: "#f4f4f6",
         fontFamily: "system-ui, -apple-system, sans-serif",
+      })
+      .setDepth(1000);
+
+    // 활성 능력 표시줄 (점수 아래)
+    this.effectText = this.add
+      .text(16, 38, "", {
+        fontSize: "15px",
+        color: "#ffe08a",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontStyle: "bold",
       })
       .setDepth(1000);
 
@@ -237,8 +353,29 @@ export class RunScene extends Phaser.Scene {
     const dt = delta / 1000;
     this.elapsed += dt;
     this.speed += SPEED_RAMP * dt;
-    this.distance += this.speed * dt * 0.1;
-    this.worldScroll += this.speed * dt;
+
+    // 속도 보정: 거북이(슬로우) ↓, 로켓·지뢰 ↑
+    const slow = this.slowTimer > 0 ? SLOW_FACTOR : 1;
+    const boost =
+      (this.rocketTimer > 0 ? ROCKET_BOOST : 1) * (this.mineTimer > 0 ? MINE_BOOST : 1);
+    const effSpeed = this.speed * slow * boost;
+    this.distance += effSpeed * dt * 0.1;
+    this.worldScroll += effSpeed * dt;
+    // 황금(점수 2배) — 적용 중 벌어들인 거리만큼 보너스 추가
+    if (this.multTimer > 0) this.bonusScore += effSpeed * dt * 0.1;
+
+    // 효과 타이머 감소
+    if (this.invincibleTimer > 0) this.invincibleTimer -= dt;
+    if (this.multTimer > 0) this.multTimer -= dt;
+    if (this.magnetTimer > 0) this.magnetTimer -= dt;
+    if (this.slowTimer > 0) this.slowTimer -= dt;
+    if (this.rocketTimer > 0) this.rocketTimer -= dt;
+    if (this.coffeeTimer > 0) this.coffeeTimer -= dt;
+    if (this.mineTimer > 0) this.mineTimer -= dt;
+    if (this.flying) {
+      this.flyTimer -= dt;
+      if (this.flyTimer <= 0) this.flying = false;
+    }
 
     this.drawBackground();
     this.drawTerrain();
@@ -246,6 +383,14 @@ export class RunScene extends Phaser.Scene {
     this.updatePlayer(dt);
     this.updateObstacles();
     this.updateCoins();
+    this.updateItems();
+
+    // 능력 아이템 등장 (코인보다 드물게)
+    this.itemTimer -= dt;
+    if (this.itemTimer <= 0) {
+      this.itemTimer = Phaser.Math.FloatBetween(14, 22);
+      this.spawnItem();
+    }
 
     this.lastSpawn += dt;
     const spawnInterval = Phaser.Math.Clamp(
@@ -272,13 +417,32 @@ export class RunScene extends Phaser.Scene {
       }
     }
 
-    const liveScore = computeScore({
-      distance: this.distance,
-      coins: this.coinCount,
-      nearMisses: this.nearMisses,
-    });
     this.scoreText.setText(
-      `🏆 ${liveScore}   🏃 ${Math.round(this.distance)}m   🪙 ${this.coinCount}`,
+      `🏆 ${this.liveScore()}   🏃 ${Math.round(this.distance)}m   🪙 ${this.coinCount}`,
+    );
+
+    // 활성 능력 표시
+    const fx: string[] = [];
+    if (this.rocketTimer > 0) fx.push(`🚀${Math.ceil(this.rocketTimer)}`);
+    else if (this.flying) fx.push(`🪂${Math.ceil(this.flyTimer)}`);
+    else if (this.invincibleTimer > 0) fx.push(`😇${Math.ceil(this.invincibleTimer)}`);
+    if (this.multTimer > 0) fx.push(`🥇${Math.ceil(this.multTimer)}`);
+    if (this.coffeeTimer > 0) fx.push(`☕${Math.ceil(this.coffeeTimer)}`);
+    if (this.magnetTimer > 0) fx.push(`🧲${Math.ceil(this.magnetTimer)}`);
+    if (this.slowTimer > 0) fx.push(`🐢${Math.ceil(this.slowTimer)}`);
+    if (this.mineTimer > 0) fx.push(`💩${Math.ceil(this.mineTimer)}`);
+    if (this.shield) fx.push("🛡️");
+    this.effectText.setText(fx.join("   "));
+  }
+
+  /** 현재 점수 (거리+코인+아슬 + 점수2배 보너스) */
+  private liveScore(): number {
+    return (
+      computeScore({
+        distance: this.distance,
+        coins: this.coinCount,
+        nearMisses: this.nearMisses,
+      }) + Math.round(this.bonusScore)
     );
   }
 
@@ -367,6 +531,19 @@ export class RunScene extends Phaser.Scene {
   }
 
   private updatePlayer(dt: number) {
+    // 프로펠러(비행): 중력 무시하고 공중에 떠서 장애물 위로
+    if (this.flying) {
+      const flySurface = this.surfaceYAt(this.worldScroll + PLAYER_X);
+      const target = flySurface - 175;
+      this.player.y = Phaser.Math.Linear(this.player.y, target, 0.08);
+      this.player.rotation = Phaser.Math.Linear(this.player.rotation, -0.12, 0.1);
+      this.playerVy = 0;
+      this.grounded = false;
+      this.applyBlink();
+      this.playerBody.updateFromGameObject();
+      return;
+    }
+
     const wasAir = !this.grounded;
     const surface = this.surfaceYAt(this.worldScroll + PLAYER_X);
     const foot = this.isSliding ? FOOT_SLIDE : FOOT_STAND;
@@ -381,6 +558,7 @@ export class RunScene extends Phaser.Scene {
       this.playerVy = 0;
       this.grounded = true;
       this.jumping = false;
+      this.airJumpUsed = false; // 착지 시 2단 점프 리셋
       if (wasAir && !this.isSliding) {
         this.squash(1.25, 0.78); // 착지 스쿼시
         this.dustPuff(this.player.x, surface);
@@ -407,7 +585,16 @@ export class RunScene extends Phaser.Scene {
     }
     this.player.rotation = Phaser.Math.Linear(this.player.rotation, targetRot, 0.2);
 
+    this.applyBlink();
     this.playerBody.updateFromGameObject();
+  }
+
+  /** 무적/비행 중 깜빡임 (그 외엔 불투명) */
+  private applyBlink() {
+    const inv = this.invincibleTimer > 0 || this.flying;
+    this.player.alpha = inv
+      ? 0.55 + 0.45 * Math.abs(Math.sin(this.elapsed * 18))
+      : 1;
   }
 
   private updateObstacles() {
@@ -433,6 +620,7 @@ export class RunScene extends Phaser.Scene {
         const gap = Math.max(0, Math.max(pb.top - body.bottom, body.top - pb.bottom));
         if (gap > 0 && gap < NEARMISS_GAP) {
           this.nearMisses += 1;
+          if (this.multTimer > 0) this.bonusScore += 25; // 점수 2배: 아슬 추가분
           this.popText(PLAYER_X, pb.top - 18, "아슬!", "#ff5fa2");
         }
       }
@@ -441,6 +629,7 @@ export class RunScene extends Phaser.Scene {
   }
 
   private updateCoins() {
+    const magnet = this.magnetTimer > 0;
     this.coins.getChildren().forEach((obj) => {
       const go = obj as Phaser.GameObjects.Image;
       const worldX = go.getData("worldX") as number;
@@ -450,21 +639,42 @@ export class RunScene extends Phaser.Scene {
         go.destroy();
         return;
       }
+      const baseY = this.surfaceYAt(worldX) - off;
+      // 자석: 반경 안의 코인을 플레이어 쪽으로 끌어당겨 자동 수거
+      if (magnet) {
+        const dist = Phaser.Math.Distance.Between(sx, baseY, this.player.x, this.player.y);
+        if (dist < MAGNET_RADIUS) {
+          go.x = Phaser.Math.Linear(go.x || sx, this.player.x, 0.2);
+          go.y = Phaser.Math.Linear(go.y || baseY, this.player.y, 0.2);
+          (go.body as Phaser.Physics.Arcade.Body).updateFromGameObject();
+          if (dist < 28) this.collectCoin(go);
+          return;
+        }
+      }
       go.x = sx;
-      go.y = this.surfaceYAt(worldX) - off;
+      go.y = baseY;
       (go.body as Phaser.Physics.Arcade.Body).updateFromGameObject();
     });
   }
 
   private tryJump() {
-    if (!this.alive) return;
-    if (!this.grounded && this.coyote <= 0) return;
-    if (this.isSliding) this.endSlide();
-    this.playerVy = JUMP_V;
-    this.grounded = false;
-    this.jumping = true;
-    this.coyote = 0; // 이중 점프 방지
-    this.squash(0.82, 1.22); // 점프 스트레치
+    if (!this.alive || this.flying) return;
+    const jv = this.coffeeTimer > 0 ? COFFEE_JUMP_V : JUMP_V; // 각성 시 강화 점프
+    if (this.grounded || this.coyote > 0) {
+      if (this.isSliding) this.endSlide();
+      this.playerVy = jv;
+      this.grounded = false;
+      this.jumping = true;
+      this.coyote = 0;
+      this.airJumpUsed = false;
+      this.squash(0.82, 1.22); // 점프 스트레치
+    } else if (this.coffeeTimer > 0 && !this.airJumpUsed) {
+      // 카페인: 공중에서 한 번 더 (2단 점프)
+      this.playerVy = jv * 0.9;
+      this.airJumpUsed = true;
+      this.squash(0.82, 1.22);
+      this.dustPuff(this.player.x, this.player.y + 28);
+    }
   }
 
   private startSlide() {
@@ -542,6 +752,7 @@ export class RunScene extends Phaser.Scene {
     const y = coin.y;
     coin.destroy();
     this.coinCount += 1;
+    if (this.multTimer > 0) this.bonusScore += 10; // 점수 2배: 코인 추가분
     this.popText(x, y, "+1", "#ffd84d");
     const ring = this.add
       .circle(x, y, 6, 0xffd84d, 0)
@@ -632,10 +843,160 @@ export class RunScene extends Phaser.Scene {
     }
   }
 
+  /** 능력 아이템 등장 (점프로 닿는 높이, 반짝이는 펄스) */
+  private spawnItem() {
+    const kind = ITEM_POOL[Math.floor(Math.random() * ITEM_POOL.length)];
+    const it = this.add.image(0, 0, `tex_item_${kind}`).setDepth(6);
+    it.setDisplaySize(46, 46);
+    it.setData("worldX", this.worldScroll + GAME_W + 30);
+    it.setData("off", 96);
+    it.setData("kind", kind);
+    this.physics.add.existing(it);
+    const body = it.body as Phaser.Physics.Arcade.Body;
+    body.setAllowGravity(false);
+    body.moves = false;
+    body.setSize(42, 42, true);
+    this.items.add(it);
+    this.tweens.add({
+      targets: it,
+      scale: it.scale * 1.18,
+      duration: 480,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+  }
+
+  private updateItems() {
+    this.items.getChildren().forEach((obj) => {
+      const go = obj as Phaser.GameObjects.Image;
+      const worldX = go.getData("worldX") as number;
+      const off = go.getData("off") as number;
+      const sx = worldX - this.worldScroll;
+      if (sx < -60) {
+        this.tweens.killTweensOf(go);
+        go.destroy();
+        return;
+      }
+      go.x = sx;
+      go.y = this.surfaceYAt(worldX) - off;
+      (go.body as Phaser.Physics.Arcade.Body).updateFromGameObject();
+    });
+  }
+
+  private collectItem(obj: Phaser.GameObjects.GameObject) {
+    const go = obj as Phaser.GameObjects.Image;
+    const kind = go.getData("kind") as ItemKind;
+    const x = go.x;
+    const y = go.y;
+    this.tweens.killTweensOf(go);
+    go.destroy();
+    this.activateItem(kind, x, y);
+  }
+
+  private activateItem(kind: ItemKind, x: number, y: number) {
+    switch (kind) {
+      case "angel":
+        this.invincibleTimer = Math.max(this.invincibleTimer, DUR_INVINCIBLE);
+        break;
+      case "gold":
+        this.multTimer = Math.max(this.multTimer, DUR_GOLD);
+        break;
+      case "shield":
+        this.shield = true;
+        break;
+      case "propeller":
+        this.flying = true;
+        this.flyTimer = Math.max(this.flyTimer, DUR_FLY);
+        break;
+      case "magnet":
+        this.magnetTimer = Math.max(this.magnetTimer, DUR_MAGNET);
+        break;
+      case "turtle":
+        this.slowTimer = Math.max(this.slowTimer, DUR_SLOW);
+        break;
+      case "rocket":
+        this.rocketTimer = Math.max(this.rocketTimer, DUR_ROCKET);
+        this.invincibleTimer = Math.max(this.invincibleTimer, DUR_ROCKET); // 폭주 중 무적
+        break;
+      case "coffee":
+        this.coffeeTimer = Math.max(this.coffeeTimer, DUR_COFFEE);
+        break;
+      case "jackpot":
+        this.coinCount += JACKPOT_COINS;
+        if (this.multTimer > 0) this.bonusScore += JACKPOT_COINS * 10;
+        break;
+      case "mine":
+        this.mineTimer = Math.max(this.mineTimer, DUR_MINE);
+        break;
+    }
+    const bad = kind === "mine";
+    const accent = bad ? 0xb58b5a : 0xffe08a;
+    this.popText(x, y - 10, ITEM_LABEL[kind], bad ? "#d2a679" : "#ffe08a", true);
+    const ring = this.add
+      .circle(x, y, 8, 0xffffff, 0)
+      .setStrokeStyle(3, accent, 0.9)
+      .setDepth(49);
+    this.tweens.add({
+      targets: ring,
+      scale: 4,
+      alpha: 0,
+      duration: 420,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+    if (bad) this.cameras.main.flash(150, 150, 90, 40);
+    else this.cameras.main.flash(120, 255, 220, 130);
+  }
+
+  /** 장애물 충돌 처리 — 무적/비행/실드면 부수고, 아니면 사망 */
+  private hitObstacle(obj: Phaser.GameObjects.GameObject) {
+    if (!this.alive) return;
+    const go = obj as Phaser.GameObjects.Image;
+    if (this.flying || this.invincibleTimer > 0) {
+      this.smash(go);
+      return;
+    }
+    if (this.shield) {
+      this.shield = false;
+      this.invincibleTimer = Math.max(this.invincibleTimer, 0.6); // 직후 재충돌 방지
+      this.popText(go.x, go.y - 18, "철벽!", "#9fd0ff");
+      this.smash(go);
+      return;
+    }
+    this.die();
+  }
+
+  /** 장애물 파괴 연출 */
+  private smash(go: Phaser.GameObjects.Image) {
+    const x = go.x;
+    const y = go.y;
+    go.destroy();
+    for (let i = 0; i < 6; i++) {
+      const f = this.add
+        .circle(x, y, Phaser.Math.Between(3, 6), 0xffe08a)
+        .setDepth(40);
+      const ang = Math.random() * Math.PI * 2;
+      const d = Phaser.Math.Between(30, 80);
+      this.tweens.add({
+        targets: f,
+        x: x + Math.cos(ang) * d,
+        y: y + Math.sin(ang) * d,
+        alpha: 0,
+        duration: 420,
+        ease: "Cubic.easeOut",
+        onComplete: () => f.destroy(),
+      });
+    }
+  }
+
   private buildEmojiTextures() {
     this.makeEmojiTexture("tex_player", PLAYER_EMOJI, 96);
     this.makeEmojiTexture("tex_coin", COIN_EMOJI, 64);
     this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96);
+    for (const kind of ITEM_KINDS) {
+      this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80);
+    }
     for (const id of this.setup.obstacleIds) {
       const emoji = OBSTACLE_EMOJI[id] ?? FALLBACK_OBSTACLE_EMOJI;
       this.makeEmojiTexture(`tex_${id}`, emoji, 96);
@@ -690,6 +1051,7 @@ export class RunScene extends Phaser.Scene {
         distance: this.distance,
         coins: this.coinCount,
         nearMisses: this.nearMisses,
+        score: this.liveScore(),
       });
     });
   }
