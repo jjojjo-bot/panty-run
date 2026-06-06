@@ -15,6 +15,7 @@ interface Props {
     mental: number;
     dodgedNotifs: number;
     ignoredCalls: number;
+    cleared: boolean;
   }) => void;
 }
 
@@ -64,6 +65,7 @@ export default function PhaserGame({ setup, onGameOver }: Props) {
           mental: number;
           dodgedNotifs: number;
           ignoredCalls: number;
+          cleared: boolean;
         }) => onGameOverRef.current(s),
       });
     })();

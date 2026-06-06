@@ -35,6 +35,7 @@ export default function PlayPage() {
       mental: number;
       dodgedNotifs: number;
       ignoredCalls: number;
+      cleared: boolean;
     }) => {
       if (!setup) return;
       const result: RunResult = {
@@ -48,6 +49,7 @@ export default function PlayPage() {
         mental: stats.mental,
         dodgedNotifs: stats.dodgedNotifs,
         ignoredCalls: stats.ignoredCalls,
+        cleared: stats.cleared,
       };
       sessionStorage.setItem("panty_run_result", JSON.stringify(result));
       router.push("/result");

@@ -22,11 +22,18 @@ export interface StageZone {
   length: number; // 이 구간 길이 (worldScroll px)
 }
 
+export interface BossDef {
+  emoji: string; // 보스 외형 (📅 거대 월요일)
+  name: string; // MONDAY
+  escapeDur: number; // 따돌리기까지 버텨야 하는 시간(초) — 도망 진행도
+}
+
 export interface StageDef {
   id: string;
   name: string;
   intro: string;
   zones: StageZone[];
+  boss?: BossDef;
 }
 
 export const MONDAY_STAGE: StageDef = {
@@ -84,6 +91,7 @@ export const MONDAY_STAGE: StageDef = {
       length: 2800,
     },
   ],
+  boss: { emoji: "📅", name: "MONDAY", escapeDur: 22 },
 };
 
 export const STAGES: Record<string, StageDef> = {

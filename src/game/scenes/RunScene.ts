@@ -3,7 +3,7 @@ import type { GeneratedRunSetup, SituationCategory } from "@/lib/types";
 import { computeScore } from "@/lib/grade";
 import { getEquippedSkin, tintToHex } from "@/lib/progress";
 import { drawPanty } from "@/lib/pantyArt";
-import { getStage, type StageDef, type AvoidKind } from "@/lib/content/stages";
+import { getStage, type StageDef, type AvoidKind, type BossDef } from "@/lib/content/stages";
 
 export interface RunSceneData {
   setup: GeneratedRunSetup;
@@ -17,6 +17,7 @@ export interface RunSceneData {
     mental: number;
     dodgedNotifs: number;
     ignoredCalls: number;
+    cleared: boolean; // 보스를 따돌려 클리어했는가
   }) => void;
 }
 
@@ -366,6 +367,13 @@ export class RunScene extends Phaser.Scene {
   private dodgedNotifs = 0; // 💬 회피한 알림 수
   private ignoredCalls = 0; // 📱 무시한 전화 수
 
+  // 보스(MONDAY) — 공격이 아니라 따돌리기
+  private boss?: BossDef;
+  private bossActive = false;
+  private escapeTimer = 0; // 남은 버티기 시간(0이면 따돌림=클리어)
+  private bossImg?: Phaser.GameObjects.Image;
+  private escapeBar!: Phaser.GameObjects.Graphics;
+
   constructor() {
     super("RunScene");
   }
@@ -421,6 +429,10 @@ export class RunScene extends Phaser.Scene {
     this.projTimer = 1.5;
     this.dodgedNotifs = 0;
     this.ignoredCalls = 0;
+    this.boss = undefined;
+    this.bossActive = false;
+    this.escapeTimer = 0;
+    this.bossImg = undefined;
     if (this.stage) {
       this.zoneEndX = this.stage.zones[0].length;
       this.terrainColor = this.stage.zones[0].ground;
@@ -560,6 +572,7 @@ export class RunScene extends Phaser.Scene {
       .setAlpha(0)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.feverBar = this.add.graphics().setDepth(1000);
+    this.escapeBar = this.add.graphics().setDepth(1000);
 
     // 위기 경고·탈출 배너 (큰 글씨, 평소 숨김)
     this.warnText = this.add
@@ -668,6 +681,7 @@ export class RunScene extends Phaser.Scene {
     // 리듬 국면 전환 + 거리 기반 패턴 스폰 + 추격자
     this.updatePhase();
     if (this.stage) this.updateZone();
+    if (this.bossActive) this.updateBoss(dt);
     let guard = 0;
     while (this.nextPatternX - this.worldScroll < GAME_W + 200 && guard++ < 8) {
       this.spawnNextPattern();
@@ -1247,8 +1261,12 @@ export class RunScene extends Phaser.Scene {
 
   /** 스테이지 구간 전환 — 거리가 구간 길이를 넘으면 다음 구간으로 */
   private updateZone() {
-    if (!this.stage) return;
-    if (this.zoneIdx >= this.stage.zones.length - 1) return; // 마지막 구간(보스 자리)
+    if (!this.stage || this.bossActive) return;
+    if (this.zoneIdx >= this.stage.zones.length - 1) {
+      // 마지막 구간을 다 지나면 보스 등장
+      if (this.stage.boss && this.worldScroll >= this.zoneEndX) this.enterBoss();
+      return;
+    }
     if (this.worldScroll >= this.zoneEndX) {
       this.zoneIdx += 1;
       this.enterZone();
@@ -1263,6 +1281,99 @@ export class RunScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(zone.bg);
     this.cameras.main.flash(320, 30, 30, 50);
     this.flashWarn(zone.name, "#cfe8ff");
+  }
+
+  /** 보스(MONDAY) 등장 — 공격이 아니라 '버티며 따돌리기' */
+  private enterBoss() {
+    if (!this.stage?.boss) return;
+    this.boss = this.stage.boss;
+    this.bossActive = true;
+    this.escapeTimer = this.boss.escapeDur;
+    // 보스 동안 위기 국면 고정(빡빡한 패턴 + 가속)
+    this.phase = "danger";
+    this.phaseEndX = Number.MAX_SAFE_INTEGER;
+    // 일반 위기 추격자(상사) 정리
+    if (this.chaser) {
+      this.tweens.killTweensOf(this.chaser);
+      this.chaser.destroy();
+      this.chaser = undefined;
+    }
+    if (this.chaserAura) {
+      this.chaserAura.destroy();
+      this.chaserAura = undefined;
+    }
+    // 거대 월요일 등장
+    this.bossImg = this.add.image(-140, GAME_H / 2 - 30, "tex_boss").setDepth(8);
+    this.bossImg.setDisplaySize(170, 170);
+    this.tweens.add({ targets: this.bossImg, x: 95, duration: 900, ease: "Back.easeOut" });
+    this.flashWarn(`📅 ${this.boss.name} 출근 강요!!`, "#ff3b3b");
+    this.cameras.main.shake(420, 0.02);
+    this.cameras.main.flash(420, 255, 50, 50);
+  }
+
+  /** 보스 추격 연출 + 도망 진행도 갱신 */
+  private updateBoss(dt: number) {
+    this.escapeTimer = Math.max(0, this.escapeTimer - dt);
+    const b = this.bossImg;
+    if (b) {
+      // 위협적으로 둥실거리며 따라옴 (멘탈 낮을수록 바짝)
+      const close = 1 - this.mental / MENTAL_MAX;
+      b.x = Phaser.Math.Linear(b.x, 95 - close * 32, 0.04) + Math.sin(this.elapsed * 2.4) * 6;
+      b.y = GAME_H / 2 - 30 + Math.sin(this.elapsed * 1.7) * 14;
+      b.rotation = Math.sin(this.elapsed * 3) * 0.06;
+    }
+    this.drawEscapeBar();
+    if (this.escapeTimer <= 0) this.clearStage();
+  }
+
+  /** 도망 진행도 게이지 (상단 중앙) — 다 차면 따돌림 */
+  private drawEscapeBar() {
+    if (!this.boss) return;
+    const g = this.escapeBar;
+    g.clear();
+    const w = 240;
+    const h = 14;
+    const x = GAME_W / 2 - w / 2;
+    const y = 14;
+    g.fillStyle(0x000000, 0.5);
+    g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 6);
+    const ratio = 1 - this.escapeTimer / this.boss.escapeDur; // 진행도
+    g.fillStyle(0x7cfc9b, 1);
+    g.fillRoundedRect(x, y, Math.max(3, w * Phaser.Math.Clamp(ratio, 0, 1)), h, 5);
+  }
+
+  /** 보스 따돌림 성공 → 클리어 */
+  private clearStage() {
+    if (!this.alive) return;
+    this.alive = false;
+    this.physics.pause();
+    this.flashWarn("탈출 성공! 🏖️", "#7cfc9b");
+    this.cameras.main.flash(300, 120, 255, 160);
+    if (this.bossImg) {
+      this.tweens.add({
+        targets: this.bossImg,
+        x: -220,
+        alpha: 0,
+        angle: -30,
+        duration: 900,
+        ease: "Quad.easeIn",
+      });
+    }
+    this.tweens.add({ targets: this.player, y: this.player.y - 30, yoyo: true, repeat: 2, duration: 250 });
+    this.time.delayedCall(1600, () => {
+      this.onGameOver({
+        time: this.elapsed,
+        distance: this.distance,
+        coins: this.coinCount,
+        nearMisses: this.nearMisses,
+        score: this.liveScore(),
+        items: this.itemCounts,
+        mental: this.mental,
+        dodgedNotifs: this.dodgedNotifs,
+        ignoredCalls: this.ignoredCalls,
+        cleared: true,
+      });
+    });
   }
 
   /** 위기 경고·탈출 배너를 잠깐 띄운다 */
@@ -1626,6 +1737,7 @@ export class RunScene extends Phaser.Scene {
     this.makeEmojiTexture("tex_coin", COIN_EMOJI, 64);
     this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96);
     this.makeEmojiTexture("tex_chaser", CHASER_EMOJI[this.setup.category], 96);
+    if (this.stage?.boss) this.makeEmojiTexture("tex_boss", this.stage.boss.emoji, 128);
     for (const kind of ITEM_KINDS) {
       this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80);
     }
@@ -1830,6 +1942,7 @@ export class RunScene extends Phaser.Scene {
         mental: this.mental,
         dodgedNotifs: this.dodgedNotifs,
         ignoredCalls: this.ignoredCalls,
+        cleared: false,
       });
     });
   }

@@ -54,7 +54,9 @@ export default function ResultPage() {
 
   const grade = gradeForScore(result.score);
   const headline = result.setup.stageId
-    ? "멘탈이 붕괴되었습니다. 출근합니다."
+    ? result.cleared
+      ? "연차 승인되었습니다. 오늘은 이겼다."
+      : "멘탈이 붕괴되었습니다. 출근합니다."
     : renderResultText(result.setup.resultTemplate, {
         time: result.survivedSeconds,
         distance: result.distanceMeters,
@@ -109,7 +111,9 @@ export default function ResultPage() {
   return (
     <main className="flex flex-col items-center justify-center min-h-dvh px-6 py-10">
       <div className="w-full max-w-md bg-panty-panel rounded-2xl p-6 text-center">
-        <div className="text-panty-mute text-xs tracking-widest">GAME OVER</div>
+        <div className="text-panty-mute text-xs tracking-widest">
+          {result.setup.stageId && result.cleared ? "STAGE CLEAR" : "GAME OVER"}
+        </div>
         <div className="text-panty-pink text-base font-bold mt-2">
           &ldquo;{result.setup.inputText}&rdquo;
         </div>
@@ -151,7 +155,7 @@ export default function ResultPage() {
               <Stat label="멘탈 잔량" value={`${Math.max(0, Math.round(result.mental ?? 0))}%`} />
             </div>
             <div className="mt-3 text-sm font-extrabold text-panty-pink">
-              🏢 결과 : 출근
+              {result.cleared ? "🏖️ 결과 : 탈출 성공" : "🏢 결과 : 출근"}
             </div>
           </>
         ) : (

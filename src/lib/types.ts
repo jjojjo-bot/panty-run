@@ -66,4 +66,5 @@ export interface RunResult {
   mental?: number; // 게임 끝 멘탈 잔량(%) — 스테이지 모드
   dodgedNotifs?: number; // 회피한 알림 수
   ignoredCalls?: number; // 무시한 전화 수
+  cleared?: boolean; // 보스를 따돌려 클리어했는가
 }
