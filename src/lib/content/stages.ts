@@ -44,8 +44,8 @@ export const MONDAY_STAGE: StageDef = {
     {
       id: "bedroom",
       name: "🛏️ 침실",
-      bg: 0x16142a,
-      ground: 0x2a2740,
+      bg: 0x1c1a44, // 새벽 인디고
+      ground: 0x322c5c,
       obstacles: [
         { emoji: "⏰", avoid: "jump", mental: 8 }, // 알람시계
         { emoji: "🧦", avoid: "jump", mental: 5 }, // 바닥 양말
@@ -56,8 +56,8 @@ export const MONDAY_STAGE: StageDef = {
     {
       id: "living",
       name: "🛋️ 거실",
-      bg: 0x231a26,
-      ground: 0x3a2c3a,
+      bg: 0x34191c, // 따뜻한 와인/적갈 (TV 불빛)
+      ground: 0x4c2a2c,
       obstacles: [
         { emoji: "🛋️", avoid: "jump", mental: 8 }, // 소파
         { emoji: "📺", avoid: "slide", mental: 8 }, // TV장
@@ -69,8 +69,8 @@ export const MONDAY_STAGE: StageDef = {
     {
       id: "hallway",
       name: "🚪 아파트 복도",
-      bg: 0x14201f,
-      ground: 0x263634,
+      bg: 0x0e2a2e, // 차가운 청록 (형광등)
+      ground: 0x1c3e42,
       obstacles: [
         { emoji: "📦", avoid: "jump", mental: 10 }, // 택배 박스
         { emoji: "🧑", avoid: "jump", mental: 8 }, // 이웃 주민
@@ -81,8 +81,8 @@ export const MONDAY_STAGE: StageDef = {
     {
       id: "street",
       name: "🚏 출근길",
-      bg: 0x1a2530,
-      ground: 0x2c3a44,
+      bg: 0x163450, // 여명 푸른 하늘
+      ground: 0x294c68,
       obstacles: [
         { emoji: "🚌", avoid: "jump", mental: 15 }, // 만원버스
         { emoji: "🚦", avoid: "slide", mental: 10 }, // 신호등

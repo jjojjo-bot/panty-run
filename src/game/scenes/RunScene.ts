@@ -796,12 +796,16 @@ export class RunScene extends Phaser.Scene {
     const g = this.bgSky;
     g.clear();
     const bg = this.bgColor();
-    const r = (bg >> 16) & 0xff;
-    const gg = (bg >> 8) & 0xff;
-    const b = bg & 0xff;
-    const sky =
-      (Math.min(255, r + 28) << 16) | (Math.min(255, gg + 24) << 8) | Math.min(255, b + 50);
-    g.fillGradientStyle(sky, sky, bg, bg, 1);
+    // 구간 색을 유지한 채 위는 밝게(하늘) 아래는 어둡게(지평) → 입체 + 단계 색조 강조
+    const scale = (f: number) => {
+      const r = Math.min(255, Math.round(((bg >> 16) & 0xff) * f));
+      const gg = Math.min(255, Math.round(((bg >> 8) & 0xff) * f));
+      const b = Math.min(255, Math.round((bg & 0xff) * f));
+      return (r << 16) | (gg << 8) | b;
+    };
+    const top = scale(1.9);
+    const bot = scale(0.5);
+    g.fillGradientStyle(top, top, bot, bot, 1);
     g.fillRect(0, 0, GAME_W, GAME_H);
   }
 
