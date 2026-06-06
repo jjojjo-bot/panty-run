@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import type { GeneratedRunSetup } from "@/lib/types";
+import type { GeneratedRunSetup, SituationCategory } from "@/lib/types";
 import { computeScore } from "@/lib/grade";
 import { getEquippedSkin, tintToHex } from "@/lib/progress";
 import { drawPanty } from "@/lib/pantyArt";
@@ -34,6 +34,18 @@ const GAUGE_BUBBLE = 7; // 비누방울 1개당 게이지
 const GAUGE_NEAR = 12; // 아슬 1회당 게이지
 const FEVER_SPEED = 1.25; // 피버 중 가속
 const HIT_GAUGE_PENALTY = 35; // 피격 시 게이지 감소
+
+// ── 리듬 국면(평상 → 위기 → 휴식)으로 긴장-이완 ─────────────────
+// 거리(px) 기준이라 슬로우/로켓으로 속도가 바뀌어도 구간 길이가 일관됨.
+const FIRST_DANGER_X = 5000; // 첫 위기까지 평상 거리(px) — 충분한 워밍업
+const NORMAL_LEN_MIN = 2400; // 평상 구간 길이 범위(px)
+const NORMAL_LEN_MAX = 3200;
+const DANGER_LEN = 2200; // 위기 구간 길이(px)
+const CALM_LEN = 1100; // 휴식(보상) 구간 길이(px)
+const DANGER_SPEED = 1.12; // 위기 중 가속 배수
+const ESCAPE_BONUS = 8; // 위기 탈출 시 비누방울 보너스
+const CHASER_GAP = 78; // 추격자 기본 추격 간격(px, 플레이어 뒤) — 화면에 보이게
+const CHASER_HIT_CLOSE = 0.4; // 위기 중 피격 시 추격자 근접도 증가량
 
 // 내리막에서도 점프가 먹히게 하는 접지 보정값
 const COYOTE_TIME = 0.12; // 지면을 떠난 직후 점프 허용 유예(초)
@@ -165,6 +177,79 @@ const OBSTACLE_EMOJI: Record<string, string> = {
   obs_time: "⏰",
 };
 
+// ── 위기 구간 추격자 — 카테고리별 빌런 ─────────────────────────
+const CHASER_EMOJI: Record<SituationCategory, string> = {
+  None: "👹",
+  Company: "👔",
+  School: "👨‍🏫",
+  Romance: "👻",
+  Military: "🪖",
+  Family: "👩",
+  Reality: "👹",
+};
+const CHASER_LABEL: Record<SituationCategory, string> = {
+  None: "현생",
+  Company: "상사",
+  School: "선생님",
+  Romance: "전 애인",
+  Military: "조교",
+  Family: "엄마",
+  Reality: "현실",
+};
+
+// ── 스폰 패턴(청크) 라이브러리 ─────────────────────────────────
+// gap·tail은 "초(시간)" 단위 — 스폰 시 현재 속도로 px 변환한다.
+// 점프 체공은 속도와 무관하게 일정(JUMP_AIRTIME)하므로, 간격을 시간으로
+// 잡아야 속도가 빨라져도 "점프로 넘을 수 있는 간격"이 항상 유지된다.
+const JUMP_AIRTIME = (2 * Math.abs(JUMP_V)) / GRAVITY; // 점프~착지 체공 ≈0.78s
+const T_SOLO = JUMP_AIRTIME + 0.28; // 개별 점프 최소 간격(착지+반응 여유) ≈1.06s
+const T_MIX = JUMP_AIRTIME + 0.12; // 점프↔슬라이드 전환 ≈0.9s
+const T_SLIDE = 0.8; // 슬라이드~슬라이드(슬라이드 0.6s 지속)
+
+type StepKind = "ground" | "overhead" | "arc" | "line";
+interface PatternStep {
+  kind: StepKind;
+  gap: number; // 직전 스텝(첫 스텝은 패턴 시작)으로부터의 시간 간격(초)
+  n?: number; // line: 코인 개수
+}
+interface Pattern {
+  id: string;
+  steps: PatternStep[];
+  tail: number; // 다음 패턴까지 최소 여유(초)
+  diff?: number; // 평상 패턴 난이도(1 쉬움 ~ 3 어려움). 진행도에 따라 해금
+}
+
+// 평상: diff로 초반 워밍업 → 점진 해금. 모든 점프는 개별 회피(T_SOLO) 기반
+const NORMAL_PATTERNS: Pattern[] = [
+  // diff 1 — 단발/코인 (워밍업)
+  { id: "single-jump", steps: [{ kind: "ground", gap: 0 }], tail: 0.45, diff: 1 },
+  { id: "single-slide", steps: [{ kind: "overhead", gap: 0 }], tail: 0.45, diff: 1 },
+  { id: "coin-arc", steps: [{ kind: "arc", gap: 0 }], tail: 0.4, diff: 1 },
+  { id: "jump-coins", steps: [{ kind: "ground", gap: 0 }, { kind: "line", gap: T_SOLO, n: 4 }], tail: 0.4, diff: 1 },
+  // diff 2 — 두 동작 조합
+  { id: "double-jump", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }], tail: 0.5, diff: 2 },
+  { id: "jump-slide", steps: [{ kind: "ground", gap: 0 }, { kind: "overhead", gap: T_MIX }], tail: 0.5, diff: 2 },
+  { id: "slide-jump", steps: [{ kind: "overhead", gap: 0 }, { kind: "ground", gap: T_MIX }], tail: 0.5, diff: 2 },
+  { id: "tunnel", steps: [{ kind: "overhead", gap: 0 }, { kind: "overhead", gap: T_SLIDE }], tail: 0.5, diff: 2 },
+  // diff 3 — 3연타(각각 개별 점프 간격)
+  { id: "stairs", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }, { kind: "ground", gap: T_SOLO }], tail: 0.6, diff: 3 },
+];
+
+// 위기: 점프·슬라이드가 번갈아 몰아침. 간격은 평상과 비슷하되 가속·추격자로 긴장
+const DANGER_PATTERNS: Pattern[] = [
+  { id: "d-zigzag", steps: [{ kind: "ground", gap: 0 }, { kind: "overhead", gap: T_MIX }, { kind: "ground", gap: T_MIX }], tail: 0.5 },
+  { id: "d-slide-jump", steps: [{ kind: "overhead", gap: 0 }, { kind: "ground", gap: T_MIX }, { kind: "overhead", gap: T_MIX }], tail: 0.5 },
+  { id: "d-double", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }], tail: 0.45 },
+  { id: "d-triple", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }, { kind: "ground", gap: T_SOLO }], tail: 0.5 },
+];
+
+// 휴식: 장애물 없이 비누방울 보상만
+const CALM_PATTERNS: Pattern[] = [
+  { id: "calm-arc", steps: [{ kind: "arc", gap: 0 }], tail: 0.6 },
+  { id: "calm-line", steps: [{ kind: "line", gap: 0, n: 6 }], tail: 0.7 },
+  { id: "calm-double-arc", steps: [{ kind: "arc", gap: 0 }, { kind: "arc", gap: 1.1 }], tail: 0.7 },
+];
+
 export class RunScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Image;
   private playerDmg!: Phaser.GameObjects.Image; // 생명 감소 시 낡음 오버레이
@@ -193,7 +278,6 @@ export class RunScene extends Phaser.Scene {
   private alive = true;
   private isSliding = false;
   private slideTimer = 0;
-  private lastSpawn = 0;
 
   private worldScroll = 0;
   private playerVy = 0;
@@ -228,6 +312,19 @@ export class RunScene extends Phaser.Scene {
 
   private streaks: { x: number; y: number; len: number }[] = [];
 
+  // 리듬 국면 & 거리 기반 패턴 스폰
+  private phase: "normal" | "danger" | "calm" = "normal";
+  private phaseEndX = 0; // worldScroll가 이 값을 넘으면 다음 국면으로
+  private nextPatternX = 0; // 다음 패턴을 배치할 worldX
+  private dangerCount = 0; // 지나온 위기 횟수
+  private warnText!: Phaser.GameObjects.Text; // 위기 경고·탈출 배너
+
+  // 추격자(위기 빌런)
+  private chaser?: Phaser.GameObjects.Image;
+  private chaserAura?: Phaser.GameObjects.Arc; // 빌런 강조용 붉은 오라
+  private chaserX = -80; // 추격자 화면 x
+  private chaserClose = 0; // 0(멀리)~1(바짝) — 위기 중 피격 시 증가
+
   constructor() {
     super("RunScene");
   }
@@ -245,7 +342,6 @@ export class RunScene extends Phaser.Scene {
     this.alive = true;
     this.isSliding = false;
     this.slideTimer = 0;
-    this.lastSpawn = 0;
     this.worldScroll = 0;
     this.playerVy = 0;
     this.grounded = true;
@@ -270,6 +366,14 @@ export class RunScene extends Phaser.Scene {
     this.feverGauge = 0;
     this.fever = false;
     this.feverTimer = 0;
+    this.phase = "normal";
+    this.phaseEndX = FIRST_DANGER_X;
+    this.nextPatternX = GAME_W + 200;
+    this.dangerCount = 0;
+    this.chaser = undefined;
+    this.chaserAura = undefined;
+    this.chaserX = -80;
+    this.chaserClose = 0;
   }
 
   create() {
@@ -389,6 +493,21 @@ export class RunScene extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD);
     this.feverBar = this.add.graphics().setDepth(1000);
 
+    // 위기 경고·탈출 배너 (큰 글씨, 평소 숨김)
+    this.warnText = this.add
+      .text(GAME_W / 2, 118, "", {
+        fontSize: "30px",
+        color: "#ff5a6a",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontStyle: "bold",
+        align: "center",
+        stroke: "#000000",
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(1100);
+
     const hint = this.add
       .text(
         GAME_W / 2,
@@ -427,7 +546,8 @@ export class RunScene extends Phaser.Scene {
     const boost =
       (this.rocketTimer > 0 ? ROCKET_BOOST : 1) *
       (this.mineTimer > 0 ? MINE_BOOST : 1) *
-      (this.fever ? FEVER_SPEED : 1);
+      (this.fever ? FEVER_SPEED : 1) *
+      (this.phase === "danger" ? DANGER_SPEED : 1);
     const effSpeed = this.speed * slow * boost;
     this.distance += effSpeed * dt * 0.1;
     this.worldScroll += effSpeed * dt;
@@ -477,16 +597,13 @@ export class RunScene extends Phaser.Scene {
       this.spawnItem();
     }
 
-    this.lastSpawn += dt;
-    const spawnInterval = Phaser.Math.Clamp(
-      1.4 - this.elapsed * 0.012,
-      0.75,
-      1.4,
-    );
-    if (this.lastSpawn >= spawnInterval) {
-      this.spawn();
-      this.lastSpawn = 0;
+    // 리듬 국면 전환 + 거리 기반 패턴 스폰 + 추격자
+    this.updatePhase();
+    let guard = 0;
+    while (this.nextPatternX - this.worldScroll < GAME_W + 200 && guard++ < 8) {
+      this.spawnNextPattern();
     }
+    this.updateChaser(dt);
 
     if (this.isSliding) {
       this.slideTimer -= dt;
@@ -885,14 +1002,13 @@ export class RunScene extends Phaser.Scene {
     return `tex_${id}`;
   }
 
-  /** 지상 장애물(점프로 회피). dx = 추가 월드 오프셋(연속 배치용) */
-  private spawnGround(dx: number) {
+  /** 지상 장애물(점프로 회피)을 worldX에 배치 */
+  private spawnGroundAt(worldX: number) {
     const obs = this.add.image(0, 0, this.pickObstacleTexture());
     obs.setDisplaySize(56, 56);
-    const worldX = this.worldScroll + GAME_W + 30 + dx;
     obs.setData("worldX", worldX);
     obs.setData("off", OFF_GROUND_OBS);
-    obs.setData("psx", GAME_W + 30 + dx);
+    obs.setData("psx", worldX - this.worldScroll);
     this.physics.add.existing(obs);
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
@@ -901,14 +1017,13 @@ export class RunScene extends Phaser.Scene {
     this.obstacles.add(obs);
   }
 
-  /** 머리 위 장애물(슬라이드로 회피) */
-  private spawnOverhead() {
+  /** 머리 위 장애물(슬라이드로 회피)을 worldX에 배치 */
+  private spawnOverheadAt(worldX: number) {
     const obs = this.add.image(0, 0, this.pickObstacleTexture());
     obs.setDisplaySize(50, 50);
-    const worldX = this.worldScroll + GAME_W + 30;
     obs.setData("worldX", worldX);
     obs.setData("off", OFF_OVERHEAD);
-    obs.setData("psx", GAME_W + 30);
+    obs.setData("psx", worldX - this.worldScroll);
     this.physics.add.existing(obs);
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
@@ -917,39 +1032,193 @@ export class RunScene extends Phaser.Scene {
     this.obstacles.add(obs);
   }
 
-  /** 점프 궤적을 따라 늘어선 코인 아크 */
-  private spawnCoinArc() {
+  /** 코인 1개를 worldX·지면 기준 높이 off에 배치 */
+  private spawnCoinAt(worldX: number, off: number) {
+    const coin = this.add.image(0, 0, "tex_coin");
+    coin.setDisplaySize(34, 34);
+    coin.setData("worldX", worldX);
+    coin.setData("off", off);
+    this.physics.add.existing(coin);
+    const body = coin.body as Phaser.Physics.Arcade.Body;
+    body.setAllowGravity(false);
+    body.moves = false;
+    body.setSize(26, 26, true);
+    this.coins.add(coin);
+  }
+
+  /** 점프 궤적을 따라 늘어선 코인 아크를 worldX부터 배치 */
+  private spawnCoinArcAt(worldX: number) {
     const n = Phaser.Math.Between(3, 5);
-    const baseX = this.worldScroll + GAME_W + 30;
     for (let i = 0; i < n; i++) {
       const t = n === 1 ? 0 : i / (n - 1); // 0..1
       const arc = Math.sin(t * Math.PI); // 가운데가 가장 높음
-      const off = OFF_COIN + arc * 70;
-      const coin = this.add.image(0, 0, "tex_coin");
-      coin.setDisplaySize(34, 34);
-      coin.setData("worldX", baseX + i * 52);
-      coin.setData("off", off);
-      this.physics.add.existing(coin);
-      const body = coin.body as Phaser.Physics.Arcade.Body;
-      body.setAllowGravity(false);
-      body.moves = false;
-      body.setSize(26, 26, true);
-      this.coins.add(coin);
+      this.spawnCoinAt(worldX + i * 52, OFF_COIN + arc * 70);
     }
   }
 
-  private spawn() {
-    const roll = Math.random();
-    if (roll < 0.42) {
-      this.spawnGround(0); // 점프
-    } else if (roll < 0.68) {
-      this.spawnOverhead(); // 슬라이드
-    } else if (roll < 0.8) {
-      // 연속 지상 장애물(리듬) — 점프 두 번
-      this.spawnGround(0);
-      this.spawnGround(190);
-    } else {
-      this.spawnCoinArc(); // 코인
+  /** 지면 위 일정 높이의 직선 코인 줄 */
+  private spawnCoinLineAt(worldX: number, n: number) {
+    for (let i = 0; i < n; i++) this.spawnCoinAt(worldX + i * 48, OFF_COIN);
+  }
+
+  /** 현재 국면 패턴 풀에서 하나 뽑아 배치하고 nextPatternX를 전진 */
+  private spawnNextPattern() {
+    let pool: Pattern[];
+    if (this.phase === "danger") pool = DANGER_PATTERNS;
+    else if (this.phase === "calm") pool = CALM_PATTERNS;
+    else {
+      // 평상: 진행도에 따라 난이도 해금 — 초반 14초는 단발/코인만, 32초+ 전체
+      const maxDiff = this.elapsed < 14 ? 1 : this.elapsed < 32 ? 2 : 3;
+      pool = NORMAL_PATTERNS.filter((p) => (p.diff ?? 1) <= maxDiff);
+    }
+    const pat = pool[Math.floor(Math.random() * pool.length)];
+    // 시간(초) 간격 → 현재 속도로 px 변환. 속도가 빨라져도 점프 타이밍이 일정해짐.
+    const pps = this.speed;
+    const startX = this.nextPatternX;
+    let cursorSec = 0;
+    for (const step of pat.steps) {
+      cursorSec += step.gap;
+      const wx = startX + cursorSec * pps;
+      switch (step.kind) {
+        case "ground":
+          this.spawnGroundAt(wx);
+          break;
+        case "overhead":
+          this.spawnOverheadAt(wx);
+          break;
+        case "arc":
+          this.spawnCoinArcAt(wx);
+          break;
+        case "line":
+          this.spawnCoinLineAt(wx, step.n ?? 5);
+          break;
+      }
+    }
+    // 패턴 사이 여유(초) — 평상은 초반 넉넉 → 점점 좁아짐, 위기 촘촘, 휴식 넉넉
+    const extraSec =
+      this.phase === "danger"
+        ? 0.5
+        : this.phase === "calm"
+          ? 0.8
+          : Phaser.Math.Clamp(1.15 - this.elapsed * 0.008, 0.7, 1.15);
+    this.nextPatternX = startX + (cursorSec + pat.tail + extraSec) * pps;
+  }
+
+  /** 국면 전환 체크 (거리 기준): 평상 → 위기 → 휴식 → 평상 */
+  private updatePhase() {
+    if (this.worldScroll < this.phaseEndX) return;
+    if (this.phase === "danger") this.enterCalm();
+    else if (this.phase === "calm") this.enterNormal();
+    else this.enterDanger();
+  }
+
+  private enterNormal() {
+    this.phase = "normal";
+    this.phaseEndX =
+      this.worldScroll + Phaser.Math.Between(NORMAL_LEN_MIN, NORMAL_LEN_MAX);
+  }
+
+  private enterDanger() {
+    this.phase = "danger";
+    this.dangerCount += 1;
+    this.phaseEndX = this.worldScroll + DANGER_LEN;
+    this.spawnChaser();
+    this.flashWarn(`⚠️ ${CHASER_LABEL[this.setup.category]} 추격!!`, "#ff5a6a");
+    this.cameras.main.shake(260, 0.012);
+    this.cameras.main.flash(220, 255, 80, 80);
+  }
+
+  private enterCalm() {
+    this.phase = "calm";
+    this.phaseEndX = this.worldScroll + CALM_LEN;
+    this.escapeChaser();
+  }
+
+  /** 위기 경고·탈출 배너를 잠깐 띄운다 */
+  private flashWarn(msg: string, color: string) {
+    this.warnText.setText(msg);
+    this.warnText.setColor(color);
+    this.tweens.killTweensOf(this.warnText);
+    this.warnText.setAlpha(1).setScale(0.6);
+    this.tweens.add({ targets: this.warnText, scale: 1, duration: 280, ease: "Back.easeOut" });
+    this.tweens.add({ targets: this.warnText, alpha: 0, delay: 1400, duration: 500 });
+  }
+
+  /** 위기 빌런 등장 (화면 왼쪽 밖에서 달려 들어옴) */
+  private spawnChaser() {
+    if (this.chaser) {
+      this.tweens.killTweensOf(this.chaser);
+      this.chaser.destroy();
+    }
+    if (this.chaserAura) this.chaserAura.destroy();
+    this.chaserX = -80;
+    this.chaserClose = 0;
+    // 붉은 오라로 장애물과 구분 + 위협감
+    this.chaserAura = this.add
+      .circle(this.chaserX, GROUND_Y, 48, 0xff2a2a, 0.34)
+      .setDepth(3)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.chaser = this.add.image(this.chaserX, GROUND_Y, "tex_chaser").setDepth(4);
+    this.chaser.setDisplaySize(78, 78);
+  }
+
+  /** 추격자 위치·달리기 연출 갱신 */
+  private updateChaser(dt: number) {
+    const c = this.chaser;
+    if (!c) return;
+    // 근접도는 시간이 지나면 서서히 회복(빤쓰가 거리를 벌림)
+    this.chaserClose = Math.max(0, this.chaserClose - dt * 0.22);
+    const gap = CHASER_GAP - this.chaserClose * 48; // close=1이면 30px 뒤까지 바짝
+    this.chaserX = Phaser.Math.Linear(this.chaserX, PLAYER_X - gap, 0.07);
+    c.x = this.chaserX;
+    c.y =
+      this.surfaceYAt(this.worldScroll + this.chaserX) -
+      34 +
+      Math.sin(this.elapsed * 13) * 6; // 달리는 바운스
+    c.rotation = Math.sin(this.elapsed * 17) * 0.09;
+    if (this.chaserAura) {
+      this.chaserAura.setPosition(c.x, c.y);
+      this.chaserAura.setScale(1 + 0.12 * Math.sin(this.elapsed * 10));
+      // 가까워질수록 진해지는 붉은 맥동
+      this.chaserAura.setAlpha(
+        0.26 + 0.14 * Math.abs(Math.sin(this.elapsed * 10)) + this.chaserClose * 0.3,
+      );
+    }
+  }
+
+  /** 위기 탈출 — 추격자 후퇴 + 비누방울 보너스 */
+  private escapeChaser() {
+    const c = this.chaser;
+    const aura = this.chaserAura;
+    this.chaser = undefined;
+    this.chaserAura = undefined;
+    this.chaserClose = 0;
+    this.coinCount += ESCAPE_BONUS;
+    if (this.multTimer > 0) this.bonusScore += ESCAPE_BONUS * 10;
+    this.flashWarn("탈출 성공! 🎉", "#7cfc9b");
+    this.popText(this.player.x, this.player.y - 50, `+${ESCAPE_BONUS} 🫧`, "#7cfc9b", true);
+    this.cameras.main.flash(160, 120, 255, 160);
+    if (c) {
+      this.tweens.killTweensOf(c);
+      this.tweens.add({
+        targets: c,
+        x: -140,
+        alpha: 0,
+        duration: 650,
+        ease: "Quad.easeIn",
+        onComplete: () => c.destroy(),
+      });
+    }
+    if (aura) {
+      this.tweens.killTweensOf(aura);
+      this.tweens.add({
+        targets: aura,
+        x: -140,
+        alpha: 0,
+        duration: 650,
+        ease: "Quad.easeIn",
+        onComplete: () => aura.destroy(),
+      });
     }
   }
 
@@ -1106,6 +1375,10 @@ export class RunScene extends Phaser.Scene {
     this.cameras.main.shake(180, 0.014);
     this.cameras.main.flash(120, 255, 110, 110);
     this.popText(this.player.x, this.player.y - 30, "빤쓰 -1 🩲", "#ff5a6a", true);
+    // 위기 중 피격 → 추격자가 바짝 따라붙음(긴장)
+    if (this.phase === "danger" && this.chaser) {
+      this.chaserClose = Math.min(1, this.chaserClose + CHASER_HIT_CLOSE);
+    }
   }
 
   /** 장애물 파괴 연출 */
@@ -1135,6 +1408,7 @@ export class RunScene extends Phaser.Scene {
     this.makeEmojiTexture("tex_player", PLAYER_EMOJI, 96);
     this.makeEmojiTexture("tex_coin", COIN_EMOJI, 64);
     this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96);
+    this.makeEmojiTexture("tex_chaser", CHASER_EMOJI[this.setup.category], 96);
     for (const kind of ITEM_KINDS) {
       this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80);
     }
