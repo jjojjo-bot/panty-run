@@ -29,6 +29,7 @@ const GRAVITY = 2000;
 const JUMP_V = -780;
 const BASE_SPEED = 360;
 const SPEED_RAMP = 14;
+const MAX_SPEED = 820; // 기본 속도 상한 — 장시간(3분+) 플레이가 가능하도록
 const MENTAL_MAX = 100; // 멘탈(정신력) 최대 — 0이면 출근(게임오버)
 const DEFAULT_DAMAGE = 12; // 데이터에 없을 때 기본 멘탈 데미지
 const HIT_IFRAMES = 1.2; // 피격 후 무적 시간(초)
@@ -362,7 +363,7 @@ export class RunScene extends Phaser.Scene {
   // 스테이지(구간) 모드 — 거리별로 배경·장애물 테마가 바뀜
   private stage?: StageDef;
   private zoneIdx = 0;
-  private zoneEndX = 0; // worldScroll가 이 값을 넘으면 다음 구간
+  private zoneTimer = 0; // 현재 구간 경과 시간(초)
   private terrainColor = 0x2b2b3a; // 현재 구간 지형 색
   private projTimer = 0; // 다음 투사체 발사까지(초)
   private dodgedNotifs = 0; // 💬 회피한 알림 수
@@ -427,6 +428,7 @@ export class RunScene extends Phaser.Scene {
     // 스테이지(구간) 모드 — stageId가 있으면 구간별 테마로 구동
     this.stage = this.setup.stageId ? getStage(this.setup.stageId) : undefined;
     this.zoneIdx = 0;
+    this.zoneTimer = 0;
     this.projTimer = 1.5;
     this.dodgedNotifs = 0;
     this.ignoredCalls = 0;
@@ -435,7 +437,6 @@ export class RunScene extends Phaser.Scene {
     this.escapeTimer = 0;
     this.bossImg = undefined;
     if (this.stage) {
-      this.zoneEndX = this.stage.zones[0].length;
       this.terrainColor = this.stage.zones[0].ground;
     } else {
       this.terrainColor = 0x2b2b3a;
@@ -623,7 +624,7 @@ export class RunScene extends Phaser.Scene {
     if (!this.alive) return;
     const dt = delta / 1000;
     this.elapsed += dt;
-    this.speed += SPEED_RAMP * dt;
+    this.speed = Math.min(MAX_SPEED, this.speed + SPEED_RAMP * dt);
 
     // 속도 보정: 거북이(슬로우) ↓, 로켓·지뢰 ↑
     const slow = this.slowTimer > 0 ? SLOW_FACTOR : 1;
@@ -683,7 +684,7 @@ export class RunScene extends Phaser.Scene {
 
     // 리듬 국면 전환 + 거리 기반 패턴 스폰 + 추격자
     this.updatePhase();
-    if (this.stage) this.updateZone();
+    if (this.stage) this.updateZone(dt);
     if (this.bossActive) this.updateBoss(dt);
     let guard = 0;
     while (this.nextPatternX - this.worldScroll < GAME_W + 200 && guard++ < 8) {
@@ -1281,15 +1282,18 @@ export class RunScene extends Phaser.Scene {
   }
 
   /** 스테이지 구간 전환 — 거리가 구간 길이를 넘으면 다음 구간으로 */
-  private updateZone() {
+  private updateZone(dt: number) {
     if (!this.stage || this.bossActive) return;
+    this.zoneTimer += dt;
+    const zone = this.stage.zones[this.zoneIdx];
     if (this.zoneIdx >= this.stage.zones.length - 1) {
-      // 마지막 구간을 다 지나면 보스 등장
-      if (this.stage.boss && this.worldScroll >= this.zoneEndX) this.enterBoss();
+      // 마지막 구간 시간이 끝나면 보스 등장
+      if (this.stage.boss && this.zoneTimer >= zone.dur) this.enterBoss();
       return;
     }
-    if (this.worldScroll >= this.zoneEndX) {
+    if (this.zoneTimer >= zone.dur) {
       this.zoneIdx += 1;
+      this.zoneTimer = 0;
       this.enterZone();
     }
   }
@@ -1297,7 +1301,6 @@ export class RunScene extends Phaser.Scene {
   /** 새 구간 진입 — 배경·지형색 전환 + 구간 배너 */
   private enterZone() {
     const zone = this.stage!.zones[this.zoneIdx];
-    this.zoneEndX += zone.length;
     this.terrainColor = zone.ground;
     this.cameras.main.setBackgroundColor(zone.bg);
     this.drawSky();
@@ -1348,20 +1351,20 @@ export class RunScene extends Phaser.Scene {
     if (this.escapeTimer <= 0) this.clearStage();
   }
 
-  /** 도망 진행도 게이지 (상단 중앙) — 다 차면 따돌림 */
+  /** 도망 진행도 게이지 (하단 중앙) — 다 차면 따돌림. 상단 멘탈 바와 분리 */
   private drawEscapeBar() {
     if (!this.boss) return;
     const g = this.escapeBar;
     g.clear();
-    const w = 240;
-    const h = 14;
+    const w = 360;
+    const h = 18;
     const x = GAME_W / 2 - w / 2;
-    const y = 14;
-    g.fillStyle(0x000000, 0.5);
-    g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 6);
+    const y = GAME_H - 30;
+    g.fillStyle(0x000000, 0.55);
+    g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 7);
     const ratio = 1 - this.escapeTimer / this.boss.escapeDur; // 진행도
     g.fillStyle(0x7cfc9b, 1);
-    g.fillRoundedRect(x, y, Math.max(3, w * Phaser.Math.Clamp(ratio, 0, 1)), h, 5);
+    g.fillRoundedRect(x, y, Math.max(4, w * Phaser.Math.Clamp(ratio, 0, 1)), h, 6);
   }
 
   /** 보스 따돌림 성공 → 클리어 */

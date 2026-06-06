@@ -19,7 +19,7 @@ export interface StageZone {
   bg: number; // 배경색
   ground: number; // 지형 색
   obstacles: ZoneObstacle[];
-  length: number; // 이 구간 길이 (worldScroll px)
+  dur: number; // 이 구간 지속 시간(초)
 }
 
 export interface BossDef {
@@ -51,7 +51,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🧦", avoid: "jump", mental: 5 }, // 바닥 양말
         { emoji: "👕", avoid: "slide", mental: 6 }, // 널린 빨래
       ],
-      length: 4800,
+      dur: 40,
     },
     {
       id: "living",
@@ -64,7 +64,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "📱", avoid: "fly", mental: 20, label: "팀장 전화" }, // 팀장 전화(제일 아픔)
         { emoji: "💬", avoid: "fly", mental: 10, label: "김대리 출근했어요?" }, // 회사 카톡
       ],
-      length: 5200,
+      dur: 45,
     },
     {
       id: "hallway",
@@ -76,7 +76,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🧑", avoid: "jump", mental: 8 }, // 이웃 주민
         { emoji: "🛗", avoid: "slide", mental: 10 }, // 엘리베이터 문
       ],
-      length: 5200,
+      dur: 45,
     },
     {
       id: "street",
@@ -88,7 +88,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🚦", avoid: "slide", mental: 10 }, // 신호등
         { emoji: "☕", avoid: "fly", mental: 15, label: "모닝커피" }, // 날아오는 커피
       ],
-      length: 5600,
+      dur: 50,
     },
   ],
   boss: { emoji: "📅", name: "MONDAY", escapeDur: 22 },
