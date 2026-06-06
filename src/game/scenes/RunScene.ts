@@ -1756,19 +1756,17 @@ export class RunScene extends Phaser.Scene {
   }
 
   private buildEmojiTextures() {
-    const DANGER_BG = "rgba(255,80,80,0.30)"; // 장애물(피해라) — 빨강
-    const REWARD_BG = "rgba(255,210,90,0.32)"; // 아이템(먹어라) — 금
     this.makeEmojiTexture("tex_player", PLAYER_EMOJI, 96);
     this.makeEmojiTexture("tex_coin", COIN_EMOJI, 64);
-    this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96, DANGER_BG);
+    this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96);
     this.makeEmojiTexture("tex_chaser", CHASER_EMOJI[this.setup.category], 96);
     if (this.stage?.boss) this.makeEmojiTexture("tex_boss", this.stage.boss.emoji, 128);
     for (const kind of ITEM_KINDS) {
-      this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80, REWARD_BG);
+      this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80);
     }
     for (const id of this.setup.obstacleIds) {
       const emoji = OBSTACLE_EMOJI[id] ?? FALLBACK_OBSTACLE_EMOJI;
-      this.makeEmojiTexture(`tex_${id}`, emoji, 96, DANGER_BG);
+      this.makeEmojiTexture(`tex_${id}`, emoji, 96);
     }
     if (this.stage) {
       const seen = new Set<string>();
@@ -1776,7 +1774,7 @@ export class RunScene extends Phaser.Scene {
         for (const o of zone.obstacles) {
           if (seen.has(o.emoji)) continue;
           seen.add(o.emoji);
-          this.makeEmojiTexture(`tex_zob_${o.emoji}`, o.emoji, 96, DANGER_BG);
+          this.makeEmojiTexture(`tex_zob_${o.emoji}`, o.emoji, 96);
         }
       }
     }
@@ -1912,23 +1910,13 @@ export class RunScene extends Phaser.Scene {
     tex.refresh();
   }
 
-  private makeEmojiTexture(key: string, emoji: string, size: number, bgColor?: string) {
+  private makeEmojiTexture(key: string, emoji: string, size: number) {
     if (this.textures.exists(key)) this.textures.remove(key);
     const tex = this.textures.createCanvas(key, size, size);
     if (!tex) return;
     const ctx = tex.getContext();
     ctx.clearRect(0, 0, size, size);
-    // 위험(빨강)/보상(금) 배경 원으로 장애물·아이템 구분
-    if (bgColor) {
-      ctx.beginPath();
-      ctx.arc(size / 2, size / 2, size * 0.46, 0, Math.PI * 2);
-      ctx.fillStyle = bgColor;
-      ctx.fill();
-      ctx.lineWidth = size * 0.03;
-      ctx.strokeStyle = bgColor.replace(/[\d.]+\)$/, "0.9)");
-      ctx.stroke();
-    }
-    ctx.font = `${Math.floor(size * 0.7)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+    ctx.font = `${Math.floor(size * 0.78)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(emoji, size / 2, size / 2);

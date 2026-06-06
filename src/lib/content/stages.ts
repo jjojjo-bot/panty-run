@@ -51,7 +51,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🧦", avoid: "jump", mental: 5 }, // 바닥 양말
         { emoji: "👕", avoid: "slide", mental: 6 }, // 널린 빨래
       ],
-      length: 2400,
+      length: 4800,
     },
     {
       id: "living",
@@ -64,7 +64,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "📱", avoid: "fly", mental: 20, label: "팀장 전화" }, // 팀장 전화(제일 아픔)
         { emoji: "💬", avoid: "fly", mental: 10, label: "김대리 출근했어요?" }, // 회사 카톡
       ],
-      length: 2600,
+      length: 5200,
     },
     {
       id: "hallway",
@@ -76,7 +76,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🧑", avoid: "jump", mental: 8 }, // 이웃 주민
         { emoji: "🛗", avoid: "slide", mental: 10 }, // 엘리베이터 문
       ],
-      length: 2600,
+      length: 5200,
     },
     {
       id: "street",
@@ -88,7 +88,7 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🚦", avoid: "slide", mental: 10 }, // 신호등
         { emoji: "☕", avoid: "fly", mental: 15, label: "모닝커피" }, // 날아오는 커피
       ],
-      length: 2800,
+      length: 5600,
     },
   ],
   boss: { emoji: "📅", name: "MONDAY", escapeDur: 22 },
