@@ -12,6 +12,9 @@ interface Props {
     nearMisses: number;
     score: number;
     items: Record<string, number>;
+    mental: number;
+    dodgedNotifs: number;
+    ignoredCalls: number;
   }) => void;
 }
 
@@ -58,6 +61,9 @@ export default function PhaserGame({ setup, onGameOver }: Props) {
           nearMisses: number;
           score: number;
           items: Record<string, number>;
+          mental: number;
+          dodgedNotifs: number;
+          ignoredCalls: number;
         }) => onGameOverRef.current(s),
       });
     })();

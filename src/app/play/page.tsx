@@ -32,6 +32,9 @@ export default function PlayPage() {
       nearMisses: number;
       score: number;
       items: Record<string, number>;
+      mental: number;
+      dodgedNotifs: number;
+      ignoredCalls: number;
     }) => {
       if (!setup) return;
       const result: RunResult = {
@@ -42,6 +45,9 @@ export default function PlayPage() {
         nearMisses: stats.nearMisses,
         score: stats.score,
         items: stats.items,
+        mental: stats.mental,
+        dodgedNotifs: stats.dodgedNotifs,
+        ignoredCalls: stats.ignoredCalls,
       };
       sessionStorage.setItem("panty_run_result", JSON.stringify(result));
       router.push("/result");

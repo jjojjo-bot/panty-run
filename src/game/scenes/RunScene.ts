@@ -14,6 +14,9 @@ export interface RunSceneData {
     nearMisses: number;
     score: number;
     items: Record<string, number>;
+    mental: number;
+    dodgedNotifs: number;
+    ignoredCalls: number;
   }) => void;
 }
 
@@ -94,7 +97,10 @@ type ItemKind =
   | "rocket"
   | "coffee"
   | "jackpot"
-  | "mine";
+  | "mine"
+  | "americano"
+  | "vacation"
+  | "holiday";
 const ITEM_EMOJI: Record<ItemKind, string> = {
   angel: "😇", // 무적
   gold: "🥇", // 점수 2배
@@ -103,9 +109,12 @@ const ITEM_EMOJI: Record<ItemKind, string> = {
   magnet: "🧲", // 코인 흡입
   turtle: "🐢", // 슬로우
   rocket: "🚀", // 폭주(가속+무적)
-  coffee: "☕", // 각성(2단 점프)
+  coffee: "⚡", // 각성(2단 점프)
   jackpot: "🧧", // 복주머니(즉시 코인)
   mine: "💩", // 함정(통제불능 가속)
+  americano: "☕", // 멘탈 +10
+  vacation: "🏖️", // 멘탈 +50
+  holiday: "🎌", // 멘탈 풀충전
 };
 const ITEM_LABEL: Record<ItemKind, string> = {
   angel: "😇 무적!",
@@ -115,9 +124,12 @@ const ITEM_LABEL: Record<ItemKind, string> = {
   magnet: "🧲 비누방울 자석!",
   turtle: "🐢 슬로우!",
   rocket: "🚀 폭주!",
-  coffee: "☕ 각성! 2단 점프",
+  coffee: "⚡ 각성! 2단 점프",
   jackpot: "🧧 비누방울 +15!",
   mine: "💩 으악, 지뢰!",
+  americano: "☕ 멘탈 +10",
+  vacation: "🏖️ 멘탈 +50!",
+  holiday: "🎌 멘탈 풀충전!",
 };
 // 스폰 가중치 — 함정(mine)은 드물게, 나머지는 비슷하게
 const ITEM_WEIGHTS: Record<ItemKind, number> = {
@@ -131,6 +143,9 @@ const ITEM_WEIGHTS: Record<ItemKind, number> = {
   coffee: 2,
   jackpot: 2,
   mine: 1,
+  americano: 3,
+  vacation: 1,
+  holiday: 1,
 };
 const ITEM_KINDS = Object.keys(ITEM_EMOJI) as ItemKind[]; // 텍스처 생성용 전체 목록
 const ITEM_POOL: ItemKind[] = (Object.keys(ITEM_WEIGHTS) as ItemKind[]).flatMap(
@@ -348,6 +363,8 @@ export class RunScene extends Phaser.Scene {
   private zoneEndX = 0; // worldScroll가 이 값을 넘으면 다음 구간
   private terrainColor = 0x2b2b3a; // 현재 구간 지형 색
   private projTimer = 0; // 다음 투사체 발사까지(초)
+  private dodgedNotifs = 0; // 💬 회피한 알림 수
+  private ignoredCalls = 0; // 📱 무시한 전화 수
 
   constructor() {
     super("RunScene");
@@ -402,6 +419,8 @@ export class RunScene extends Phaser.Scene {
     this.stage = this.setup.stageId ? getStage(this.setup.stageId) : undefined;
     this.zoneIdx = 0;
     this.projTimer = 1.5;
+    this.dodgedNotifs = 0;
+    this.ignoredCalls = 0;
     if (this.stage) {
       this.zoneEndX = this.stage.zones[0].length;
       this.terrainColor = this.stage.zones[0].ground;
@@ -1396,6 +1415,7 @@ export class RunScene extends Phaser.Scene {
     body.moves = false;
     body.setSize(40, 40, true);
     p.setData("mental", o.mental);
+    p.setData("emoji", o.emoji);
     p.setData("vx", -Phaser.Math.Between(520, 600));
     if (o.label) {
       const lbl = this.add
@@ -1421,6 +1441,13 @@ export class RunScene extends Phaser.Scene {
       const p = obj as Phaser.GameObjects.Image;
       const vx = (p.getData("vx") as number) ?? -560;
       p.x += vx * dt;
+      // 플레이어를 지나치면(=회피 성공) 종류별로 집계
+      if (this.alive && p.x < PLAYER_X - 30 && !p.getData("passed")) {
+        p.setData("passed", true);
+        const emoji = p.getData("emoji") as string;
+        if (emoji === "📱" || emoji === "📞") this.ignoredCalls += 1;
+        else this.dodgedNotifs += 1;
+      }
       const lbl = p.getData("label") as Phaser.GameObjects.Text | undefined;
       if (lbl) lbl.setPosition(p.x, p.y - 32);
       (p.body as Phaser.Physics.Arcade.Body).updateFromGameObject();
@@ -1477,6 +1504,15 @@ export class RunScene extends Phaser.Scene {
         break;
       case "mine":
         this.mineTimer = Math.max(this.mineTimer, DUR_MINE);
+        break;
+      case "americano":
+        this.healMental(10);
+        break;
+      case "vacation":
+        this.healMental(50);
+        break;
+      case "holiday":
+        this.healMental(MENTAL_MAX);
         break;
     }
     const bad = kind === "mine";
@@ -1551,6 +1587,13 @@ export class RunScene extends Phaser.Scene {
     if (this.phase === "danger" && this.chaser) {
       this.chaserClose = Math.min(1, this.chaserClose + CHASER_HIT_CLOSE);
     }
+  }
+
+  /** 멘탈 회복 (회복 아이템) — 낡음 오버레이도 갱신 */
+  private healMental(n: number) {
+    this.mental = Math.min(MENTAL_MAX, this.mental + n);
+    if (this.mental > 66) this.playerDmg.setVisible(false);
+    else if (this.mental > 33) this.playerDmg.setTexture("tex_dmg1");
   }
 
   /** 장애물 파괴 연출 */
@@ -1784,6 +1827,9 @@ export class RunScene extends Phaser.Scene {
         nearMisses: this.nearMisses,
         score: this.liveScore(),
         items: this.itemCounts,
+        mental: this.mental,
+        dodgedNotifs: this.dodgedNotifs,
+        ignoredCalls: this.ignoredCalls,
       });
     });
   }

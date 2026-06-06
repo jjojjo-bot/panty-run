@@ -53,14 +53,16 @@ export default function ResultPage() {
   }
 
   const grade = gradeForScore(result.score);
-  const headline = renderResultText(result.setup.resultTemplate, {
-    time: result.survivedSeconds,
-    distance: result.distanceMeters,
-    coins: result.coins,
-    input: result.setup.inputText,
-    near: result.nearMisses,
-    score: result.score,
-  });
+  const headline = result.setup.stageId
+    ? "멘탈이 붕괴되었습니다. 출근합니다."
+    : renderResultText(result.setup.resultTemplate, {
+        time: result.survivedSeconds,
+        distance: result.distanceMeters,
+        coins: result.coins,
+        input: result.setup.inputText,
+        near: result.nearMisses,
+        score: result.score,
+      });
 
   function openImageCard() {
     if (!result) return;
@@ -140,12 +142,26 @@ export default function ResultPage() {
           {headline}
         </div>
 
-        <div className="grid grid-cols-4 gap-2 text-xs text-panty-mute">
-          <Stat label="생존" value={`${Math.round(result.survivedSeconds)}s`} />
-          <Stat label="거리" value={`${Math.round(result.distanceMeters)}m`} />
-          <Stat label="방울" value={`${result.coins}`} />
-          <Stat label="아슬" value={`${result.nearMisses}`} />
-        </div>
+        {result.setup.stageId ? (
+          <>
+            <div className="grid grid-cols-2 gap-2 text-xs text-panty-mute">
+              <Stat label="도망 거리" value={`${(result.distanceMeters / 1000).toFixed(2)}km`} />
+              <Stat label="회피한 알림" value={`${result.dodgedNotifs ?? 0}개`} />
+              <Stat label="무시한 전화" value={`${result.ignoredCalls ?? 0}통`} />
+              <Stat label="멘탈 잔량" value={`${Math.max(0, Math.round(result.mental ?? 0))}%`} />
+            </div>
+            <div className="mt-3 text-sm font-extrabold text-panty-pink">
+              🏢 결과 : 출근
+            </div>
+          </>
+        ) : (
+          <div className="grid grid-cols-4 gap-2 text-xs text-panty-mute">
+            <Stat label="생존" value={`${Math.round(result.survivedSeconds)}s`} />
+            <Stat label="거리" value={`${Math.round(result.distanceMeters)}m`} />
+            <Stat label="방울" value={`${result.coins}`} />
+            <Stat label="아슬" value={`${result.nearMisses}`} />
+          </div>
+        )}
 
         {/* 신규 해금 연출 */}
         {outcome && (outcome.newAchievements.length > 0 || outcome.newSkins.length > 0) && (
