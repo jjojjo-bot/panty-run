@@ -33,6 +33,7 @@ export interface GeneratedRunSetup {
   obstacleIds: string[];
   introText: string;
   resultTemplate: string;
+  stageId?: string; // 있으면 스테이지(구간) 모드로 구동
 }
 
 export interface CategoryDefinition {

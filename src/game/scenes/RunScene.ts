@@ -3,6 +3,7 @@ import type { GeneratedRunSetup, SituationCategory } from "@/lib/types";
 import { computeScore } from "@/lib/grade";
 import { getEquippedSkin, tintToHex } from "@/lib/progress";
 import { drawPanty } from "@/lib/pantyArt";
+import { getStage, type StageDef, type AvoidKind } from "@/lib/content/stages";
 
 export interface RunSceneData {
   setup: GeneratedRunSetup;
@@ -24,7 +25,8 @@ const GRAVITY = 2000;
 const JUMP_V = -780;
 const BASE_SPEED = 360;
 const SPEED_RAMP = 14;
-const START_LIVES = 3; // 기본 생명 수
+const MENTAL_MAX = 100; // 멘탈(정신력) 최대 — 0이면 출근(게임오버)
+const DEFAULT_DAMAGE = 12; // 데이터에 없을 때 기본 멘탈 데미지
 const HIT_IFRAMES = 1.2; // 피격 후 무적 시간(초)
 
 // 콤보 & 피버
@@ -272,6 +274,7 @@ export class RunScene extends Phaser.Scene {
   private obstacles!: Phaser.Physics.Arcade.Group;
   private coins!: Phaser.Physics.Arcade.Group;
   private items!: Phaser.Physics.Arcade.Group;
+  private projectiles!: Phaser.Physics.Arcade.Group; // 날아오는 투사체(fly)
   private scoreText!: Phaser.GameObjects.Text;
   private effectText!: Phaser.GameObjects.Text;
   private centerFx!: Phaser.GameObjects.Text; // 화면 중앙 큰 효과 표시
@@ -285,8 +288,8 @@ export class RunScene extends Phaser.Scene {
   private coinCount = 0;
   private nearMisses = 0;
   private speed = BASE_SPEED;
-  private baseSpeed = BASE_SPEED; // 생명 차감 시 되돌릴 초기 속도
-  private lives = START_LIVES;
+  private baseSpeed = BASE_SPEED; // 피격 시 되돌릴 초기 속도
+  private mental = MENTAL_MAX; // 멘탈(정신력) 0~100, 0이면 출근
   private alive = true;
   private isSliding = false;
   private slideTimer = 0;
@@ -321,6 +324,8 @@ export class RunScene extends Phaser.Scene {
   private feverTimer = 0;
   private feverBar!: Phaser.GameObjects.Graphics;
   private feverOverlay!: Phaser.GameObjects.Rectangle;
+  private mentalBar!: Phaser.GameObjects.Graphics;
+  private mentalText!: Phaser.GameObjects.Text;
 
   private streaks: { x: number; y: number; len: number }[] = [];
 
@@ -337,6 +342,13 @@ export class RunScene extends Phaser.Scene {
   private chaserX = -80; // 추격자 화면 x
   private chaserClose = 0; // 0(멀리)~1(바짝) — 위기 중 피격 시 증가
 
+  // 스테이지(구간) 모드 — 거리별로 배경·장애물 테마가 바뀜
+  private stage?: StageDef;
+  private zoneIdx = 0;
+  private zoneEndX = 0; // worldScroll가 이 값을 넘으면 다음 구간
+  private terrainColor = 0x2b2b3a; // 현재 구간 지형 색
+  private projTimer = 0; // 다음 투사체 발사까지(초)
+
   constructor() {
     super("RunScene");
   }
@@ -350,7 +362,7 @@ export class RunScene extends Phaser.Scene {
     this.nearMisses = 0;
     this.speed = BASE_SPEED * (1 + (data.setup.intensity - 1) * 0.08);
     this.baseSpeed = this.speed;
-    this.lives = START_LIVES;
+    this.mental = MENTAL_MAX;
     this.alive = true;
     this.isSliding = false;
     this.slideTimer = 0;
@@ -386,6 +398,16 @@ export class RunScene extends Phaser.Scene {
     this.chaserAura = undefined;
     this.chaserX = -80;
     this.chaserClose = 0;
+    // 스테이지(구간) 모드 — stageId가 있으면 구간별 테마로 구동
+    this.stage = this.setup.stageId ? getStage(this.setup.stageId) : undefined;
+    this.zoneIdx = 0;
+    this.projTimer = 1.5;
+    if (this.stage) {
+      this.zoneEndX = this.stage.zones[0].length;
+      this.terrainColor = this.stage.zones[0].ground;
+    } else {
+      this.terrainColor = 0x2b2b3a;
+    }
   }
 
   create() {
@@ -435,8 +457,12 @@ export class RunScene extends Phaser.Scene {
     this.obstacles = this.physics.add.group({ allowGravity: false, immovable: true });
     this.coins = this.physics.add.group({ allowGravity: false });
     this.items = this.physics.add.group({ allowGravity: false });
+    this.projectiles = this.physics.add.group({ allowGravity: false });
 
     this.physics.add.overlap(this.player, this.obstacles, (_p, o) =>
+      this.hitObstacle(o as Phaser.GameObjects.GameObject),
+    );
+    this.physics.add.overlap(this.player, this.projectiles, (_p, o) =>
       this.hitObstacle(o as Phaser.GameObjects.GameObject),
     );
     this.physics.add.overlap(this.player, this.coins, (_p, c) =>
@@ -463,8 +489,19 @@ export class RunScene extends Phaser.Scene {
       duration: 800,
     });
 
+    // 멘탈 게이지 (좌상단, 핵심 생존 지표)
+    this.mentalText = this.add
+      .text(16, 13, "🧠 100%", {
+        fontSize: "15px",
+        color: "#f4f4f6",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontStyle: "bold",
+      })
+      .setDepth(1000);
+    this.mentalBar = this.add.graphics().setDepth(1000);
+
     this.scoreText = this.add
-      .text(16, 16, "", {
+      .text(16, 40, "", {
         fontSize: "16px",
         color: "#f4f4f6",
         fontFamily: "system-ui, -apple-system, sans-serif",
@@ -473,7 +510,7 @@ export class RunScene extends Phaser.Scene {
 
     // 활성 능력 표시줄 (점수 아래)
     this.effectText = this.add
-      .text(16, 38, "", {
+      .text(16, 64, "", {
         fontSize: "15px",
         color: "#ffe08a",
         fontFamily: "system-ui, -apple-system, sans-serif",
@@ -611,11 +648,22 @@ export class RunScene extends Phaser.Scene {
 
     // 리듬 국면 전환 + 거리 기반 패턴 스폰 + 추격자
     this.updatePhase();
+    if (this.stage) this.updateZone();
     let guard = 0;
     while (this.nextPatternX - this.worldScroll < GAME_W + 200 && guard++ < 8) {
       this.spawnNextPattern();
     }
     this.updateChaser(dt);
+
+    // 투사체(fly) — 현재 구간에 fly 장애물이 있으면 주기적으로 날아옴
+    if (this.zoneHasFly()) {
+      this.projTimer -= dt;
+      if (this.projTimer <= 0) {
+        this.projTimer = Phaser.Math.FloatBetween(1.6, 2.6);
+        this.spawnProjectile();
+      }
+    }
+    this.updateProjectiles(dt);
 
     if (this.isSliding) {
       this.slideTimer -= dt;
@@ -631,10 +679,11 @@ export class RunScene extends Phaser.Scene {
       }
     }
 
-    const lifeIcons = "🩲".repeat(Math.max(0, this.lives));
+    this.mentalText.setText(`🧠 ${Math.ceil(this.mental)}%`);
+    this.drawMentalBar();
     const comboStr = this.combo >= 2 ? `   🔥x${this.combo}` : "";
     this.scoreText.setText(
-      `${lifeIcons}   🏆 ${this.liveScore()}   🏃 ${Math.round(this.distance)}m   🫧 ${this.coinCount}${comboStr}`,
+      `🏆 ${this.liveScore()}   🏃 ${Math.round(this.distance)}m   🫧 ${this.coinCount}${comboStr}`,
     );
 
     // 활성 능력 표시
@@ -727,7 +776,7 @@ export class RunScene extends Phaser.Scene {
     const step = 12;
     g.clear();
 
-    g.fillStyle(0x2b2b3a, 1);
+    g.fillStyle(this.terrainColor, 1);
     g.beginPath();
     g.moveTo(0, GAME_H);
     for (let x = 0; x <= GAME_W; x += step) {
@@ -1007,20 +1056,29 @@ export class RunScene extends Phaser.Scene {
     });
   }
 
-  private pickObstacleTexture(): string {
+  private pickObstacle(avoid?: AvoidKind): { tex: string; mental: number } {
+    if (this.stage) {
+      const zone = this.stage.zones[this.zoneIdx];
+      const pool = avoid ? zone.obstacles.filter((o) => o.avoid === avoid) : zone.obstacles;
+      const list = pool.length ? pool : zone.obstacles;
+      const o = list[Math.floor(Math.random() * list.length)];
+      return { tex: `tex_zob_${o.emoji}`, mental: o.mental };
+    }
     const ids = this.setup.obstacleIds;
-    if (ids.length === 0) return "tex_fallback_obstacle";
+    if (ids.length === 0) return { tex: "tex_fallback_obstacle", mental: DEFAULT_DAMAGE };
     const id = ids[Math.floor(Math.random() * ids.length)];
-    return `tex_${id}`;
+    return { tex: `tex_${id}`, mental: DEFAULT_DAMAGE };
   }
 
   /** 지상 장애물(점프로 회피)을 worldX에 배치 */
   private spawnGroundAt(worldX: number) {
-    const obs = this.add.image(0, 0, this.pickObstacleTexture());
+    const pick = this.pickObstacle("jump");
+    const obs = this.add.image(0, 0, pick.tex);
     obs.setDisplaySize(56, 56);
     obs.setData("worldX", worldX);
     obs.setData("off", OFF_GROUND_OBS);
     obs.setData("psx", worldX - this.worldScroll);
+    obs.setData("mental", pick.mental);
     this.physics.add.existing(obs);
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
@@ -1031,11 +1089,13 @@ export class RunScene extends Phaser.Scene {
 
   /** 머리 위 장애물(슬라이드로 회피)을 worldX에 배치 */
   private spawnOverheadAt(worldX: number) {
-    const obs = this.add.image(0, 0, this.pickObstacleTexture());
+    const pick = this.pickObstacle("slide");
+    const obs = this.add.image(0, 0, pick.tex);
     obs.setDisplaySize(50, 50);
     obs.setData("worldX", worldX);
     obs.setData("off", OFF_OVERHEAD);
     obs.setData("psx", worldX - this.worldScroll);
+    obs.setData("mental", pick.mental);
     this.physics.add.existing(obs);
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
@@ -1164,6 +1224,26 @@ export class RunScene extends Phaser.Scene {
     this.phase = "calm";
     this.phaseEndX = this.worldScroll + CALM_LEN;
     this.escapeChaser();
+  }
+
+  /** 스테이지 구간 전환 — 거리가 구간 길이를 넘으면 다음 구간으로 */
+  private updateZone() {
+    if (!this.stage) return;
+    if (this.zoneIdx >= this.stage.zones.length - 1) return; // 마지막 구간(보스 자리)
+    if (this.worldScroll >= this.zoneEndX) {
+      this.zoneIdx += 1;
+      this.enterZone();
+    }
+  }
+
+  /** 새 구간 진입 — 배경·지형색 전환 + 구간 배너 */
+  private enterZone() {
+    const zone = this.stage!.zones[this.zoneIdx];
+    this.zoneEndX += zone.length;
+    this.terrainColor = zone.ground;
+    this.cameras.main.setBackgroundColor(zone.bg);
+    this.cameras.main.flash(320, 30, 30, 50);
+    this.flashWarn(zone.name, "#cfe8ff");
   }
 
   /** 위기 경고·탈출 배너를 잠깐 띄운다 */
@@ -1295,6 +1375,63 @@ export class RunScene extends Phaser.Scene {
     });
   }
 
+  /** 현재 구간에 투사체(fly) 장애물이 있는가 */
+  private zoneHasFly(): boolean {
+    if (!this.stage) return false;
+    return this.stage.zones[this.zoneIdx].obstacles.some((o) => o.avoid === "fly");
+  }
+
+  /** 투사체 발사 — 화면 오른쪽에서 머리 높이로 날아옴 (슬라이드로 숙여 회피) */
+  private spawnProjectile() {
+    if (!this.stage) return;
+    const flyList = this.stage.zones[this.zoneIdx].obstacles.filter((o) => o.avoid === "fly");
+    if (!flyList.length) return;
+    const o = flyList[Math.floor(Math.random() * flyList.length)];
+    const y = this.surfaceYAt(this.worldScroll + PLAYER_X) - 64; // 머리 높이
+    const p = this.add.image(GAME_W + 40, y, `tex_zob_${o.emoji}`).setDepth(7);
+    p.setDisplaySize(46, 46);
+    this.physics.add.existing(p);
+    const body = p.body as Phaser.Physics.Arcade.Body;
+    body.setAllowGravity(false);
+    body.moves = false;
+    body.setSize(40, 40, true);
+    p.setData("mental", o.mental);
+    p.setData("vx", -Phaser.Math.Between(520, 600));
+    if (o.label) {
+      const lbl = this.add
+        .text(GAME_W + 40, y - 32, o.label, {
+          fontSize: "13px",
+          color: "#ffffff",
+          backgroundColor: "#2a2a3a",
+          padding: { x: 7, y: 3 },
+          fontFamily: "system-ui, -apple-system, sans-serif",
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5)
+        .setDepth(7);
+      p.setData("label", lbl);
+    }
+    this.projectiles.add(p);
+    this.tweens.add({ targets: p, angle: 14, duration: 160, yoyo: true, repeat: -1 });
+  }
+
+  /** 투사체 이동 + 말풍선 동기화 */
+  private updateProjectiles(dt: number) {
+    this.projectiles.getChildren().forEach((obj) => {
+      const p = obj as Phaser.GameObjects.Image;
+      const vx = (p.getData("vx") as number) ?? -560;
+      p.x += vx * dt;
+      const lbl = p.getData("label") as Phaser.GameObjects.Text | undefined;
+      if (lbl) lbl.setPosition(p.x, p.y - 32);
+      (p.body as Phaser.Physics.Arcade.Body).updateFromGameObject();
+      if (p.x < -80) {
+        this.tweens.killTweensOf(p);
+        lbl?.destroy();
+        p.destroy();
+      }
+    });
+  }
+
   private collectItem(obj: Phaser.GameObjects.GameObject) {
     const go = obj as Phaser.GameObjects.Image;
     const kind = go.getData("kind") as ItemKind;
@@ -1391,9 +1528,11 @@ export class RunScene extends Phaser.Scene {
 
   /** 생명 1 차감 — 0이면 게임오버, 아니면 속도 초기화 + 짧은 무적 */
   private loseLife(go: Phaser.GameObjects.Image) {
-    this.lives -= 1;
-    if (this.lives <= 0) {
-      this.die();
+    const dmg = (go.getData("mental") as number) ?? DEFAULT_DAMAGE;
+    this.mental = Math.max(0, this.mental - dmg);
+    if (this.mental <= 0) {
+      this.smash(go);
+      this.die(); // 멘탈 붕괴 → 출근
       return;
     }
     this.smash(go); // 부딪힌 장애물 제거
@@ -1401,12 +1540,13 @@ export class RunScene extends Phaser.Scene {
     this.invincibleTimer = Math.max(this.invincibleTimer, HIT_IFRAMES);
     this.combo = 0; // 콤보 끊김
     this.feverGauge = Math.max(0, this.feverGauge - HIT_GAUGE_PENALTY);
-    // 빤쓰 낡음 단계 갱신 (생명 2 → 1단계, 1 → 2단계)
-    this.playerDmg.setTexture(this.lives === 2 ? "tex_dmg1" : "tex_dmg2");
-    this.playerDmg.setVisible(true);
+    // 멘탈 낮을수록 빤쓰가 낡음 (66% 이하 1단계, 33% 이하 2단계)
+    if (this.mental <= 33) this.playerDmg.setTexture("tex_dmg2");
+    else if (this.mental <= 66) this.playerDmg.setTexture("tex_dmg1");
+    this.playerDmg.setVisible(this.mental <= 66);
     this.cameras.main.shake(180, 0.014);
     this.cameras.main.flash(120, 255, 110, 110);
-    this.popText(this.player.x, this.player.y - 30, "빤쓰 -1 🩲", "#ff5a6a", true);
+    this.popText(this.player.x, this.player.y - 30, `멘탈 -${dmg} 🧠`, "#ff5a6a", true);
     // 위기 중 피격 → 추격자가 바짝 따라붙음(긴장)
     if (this.phase === "danger" && this.chaser) {
       this.chaserClose = Math.min(1, this.chaserClose + CHASER_HIT_CLOSE);
@@ -1415,6 +1555,8 @@ export class RunScene extends Phaser.Scene {
 
   /** 장애물 파괴 연출 */
   private smash(go: Phaser.GameObjects.Image) {
+    const lbl = go.getData("label") as Phaser.GameObjects.Text | undefined;
+    if (lbl) lbl.destroy();
     const x = go.x;
     const y = go.y;
     go.destroy();
@@ -1447,6 +1589,16 @@ export class RunScene extends Phaser.Scene {
     for (const id of this.setup.obstacleIds) {
       const emoji = OBSTACLE_EMOJI[id] ?? FALLBACK_OBSTACLE_EMOJI;
       this.makeEmojiTexture(`tex_${id}`, emoji, 96);
+    }
+    if (this.stage) {
+      const seen = new Set<string>();
+      for (const zone of this.stage.zones) {
+        for (const o of zone.obstacles) {
+          if (seen.has(o.emoji)) continue;
+          seen.add(o.emoji);
+          this.makeEmojiTexture(`tex_zob_${o.emoji}`, o.emoji, 96);
+        }
+      }
     }
   }
 
@@ -1521,14 +1673,32 @@ export class RunScene extends Phaser.Scene {
     this.feverGauge = 0;
   }
 
-  /** 피버 게이지/타이머 바 (상단 중앙) */
+  /** 멘탈 게이지 바 (좌상단, 🧠 텍스트 옆) */
+  private drawMentalBar() {
+    const g = this.mentalBar;
+    g.clear();
+    const w = 110;
+    const h = 12;
+    const x = 104;
+    const y = 16;
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 5);
+    const ratio = Phaser.Math.Clamp(this.mental / MENTAL_MAX, 0, 1);
+    const col = this.mental > 50 ? 0x7fe6c0 : this.mental > 20 ? 0xffd84d : 0xff5a4d;
+    if (ratio > 0) {
+      g.fillStyle(col, 1);
+      g.fillRoundedRect(x, y, Math.max(3, w * ratio), h, 4);
+    }
+  }
+
+  /** 피버 게이지/타이머 바 (우상단) */
   private drawFeverBar() {
     const g = this.feverBar;
     g.clear();
-    const w = 180;
+    const w = 150;
     const h = 12;
-    const x = GAME_W / 2 - w / 2;
-    const y = 12;
+    const x = GAME_W - w - 16;
+    const y = 14;
     g.fillStyle(0x000000, 0.45);
     g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 6);
     const ratio = this.fever ? this.feverTimer / FEVER_DUR : this.feverGauge / FEVER_MAX;
@@ -1576,31 +1746,37 @@ export class RunScene extends Phaser.Scene {
     this.physics.pause();
     this.playerDmg.setVisible(false);
     this.tweens.killTweensOf(this.player);
-    this.cameras.main.shake(300, 0.02);
-    this.cameras.main.flash(140, 255, 80, 80);
+    this.cameras.main.shake(260, 0.018);
 
-    // 파편 터뜨리기
-    for (let i = 0; i < 9; i++) {
-      const f = this.add
-        .circle(this.player.x, this.player.y, Phaser.Math.Between(3, 6), 0xff5fa2)
-        .setDepth(40);
-      const ang = Math.random() * Math.PI * 2;
-      const dist = Phaser.Math.Between(45, 120);
-      this.tweens.add({
-        targets: f,
-        x: f.x + Math.cos(ang) * dist,
-        y: f.y + Math.sin(ang) * dist,
-        alpha: 0,
-        duration: 600,
-        ease: "Cubic.easeOut",
-        onComplete: () => f.destroy(),
-      });
-    }
-    this.popText(this.player.x, this.player.y - 30, "💥", "#ffffff", true);
+    // 멘탈 붕괴 — 빤쓰가 축 늘어짐 🫠
+    this.popText(this.player.x, this.player.y - 30, "🫠", "#ffffff", true);
+    this.tweens.add({
+      targets: this.player,
+      angle: 90,
+      alpha: 0.4,
+      y: this.player.y + 14,
+      duration: 500,
+      ease: "Quad.easeIn",
+    });
 
-    this.tweens.add({ targets: this.player, angle: 90, duration: 300 });
+    // 암전 → (침묵) → 🎤"출근." → 결과로
+    const black = this.add
+      .rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x000000, 0)
+      .setDepth(2000);
+    this.tweens.add({ targets: black, alpha: 1, delay: 500, duration: 600 });
+    const chul = this.add
+      .text(GAME_W / 2, GAME_H / 2, "출근.", {
+        fontSize: "46px",
+        color: "#e8e8ee",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(2001)
+      .setAlpha(0);
+    this.tweens.add({ targets: chul, alpha: 1, delay: 1600, duration: 500 });
 
-    this.time.delayedCall(650, () => {
+    this.time.delayedCall(2700, () => {
       this.onGameOver({
         time: this.elapsed,
         distance: this.distance,
@@ -1613,6 +1789,7 @@ export class RunScene extends Phaser.Scene {
   }
 
   private bgColor(): number {
+    if (this.stage) return this.stage.zones[this.zoneIdx].bg;
     switch (this.setup.category) {
       case "Company": return 0x1a1f2e;
       case "School": return 0x1f2e1a;

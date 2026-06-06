@@ -3,22 +3,12 @@
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { analyzeInput } from "@/lib/analyzer";
-import { resolveSetup } from "@/lib/resolver";
 import { gradeForScore } from "@/lib/grade";
 import { getBestScore, getCoinBalance } from "@/lib/progress";
+import { makeStageSetup } from "@/lib/content/stages";
 
-const PRESETS = [
-  "월요일 출근 너무 싫어",
-  "내일 시험인데 공부 하나도 못했어",
-  "전 여친이 결혼한대",
-  "명절에 친척 잔소리 듣기 싫어",
-  "팀장님이 나 또 불렀어",
-];
-
-export default function InputPage() {
+export default function HomePage() {
   const router = useRouter();
-  const [input, setInput] = useState("");
   const [best, setBest] = useState(0);
   const [coins, setCoins] = useState(0);
 
@@ -27,13 +17,9 @@ export default function InputPage() {
     setCoins(getCoinBalance());
   }, []);
 
-  function start() {
-    const text = input.trim();
-    if (!text) return;
-    const analysis = analyzeInput(text);
-    const setup = resolveSetup(analysis);
+  function startStage(id: string) {
+    const setup = makeStageSetup(id);
     sessionStorage.setItem("panty_run_setup", JSON.stringify(setup));
-    sessionStorage.setItem("panty_run_analysis", JSON.stringify(analysis));
     router.push("/play");
   }
 
@@ -42,13 +28,13 @@ export default function InputPage() {
       <div className="w-full max-w-md flex flex-col items-center">
         <div className="text-6xl mb-2">🩲</div>
         <h1 className="text-3xl font-extrabold text-panty-pink mb-1">빤쓰런</h1>
-        <p className="text-panty-mute text-sm text-center mb-4">
-          도망치고 싶은 순간을 적어.
+        <p className="text-panty-mute text-sm text-center mb-5">
+          현실에서 도망쳐라.
           <br />
-          빤쓰가 대신 달린다.
+          오늘의 적은 — 월요일.
         </p>
 
-        <div className="flex items-center gap-2 mb-6">
+        <div className="flex items-center gap-2 mb-6 flex-wrap justify-center">
           {best > 0 && (
             <div className="text-xs font-bold text-panty-mute bg-panty-panel rounded-full px-4 py-1.5">
               🏆 최고 {best.toLocaleString()}점 · {gradeForScore(best).title}
@@ -68,33 +54,38 @@ export default function InputPage() {
           </Link>
         </div>
 
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="예: 월요일 출근 너무 싫어"
-          className="w-full rounded-xl bg-panty-panel p-4 text-panty-ink outline-none resize-none h-24 placeholder:text-panty-mute/60"
-          maxLength={120}
-        />
-
-        <div className="flex flex-wrap gap-2 my-4 w-full">
-          {PRESETS.map((p) => (
-            <button
-              key={p}
-              onClick={() => setInput(p)}
-              className="text-xs px-3 py-1.5 rounded-full bg-panty-panel text-panty-mute hover:text-panty-ink transition"
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-
+        {/* STAGE 1 — 월요일 출근 탈출 */}
         <button
-          onClick={start}
-          disabled={!input.trim()}
-          className="w-full rounded-xl bg-panty-pink py-4 text-lg font-extrabold text-panty-bg disabled:opacity-40 active:scale-[0.98] transition"
+          onClick={() => startStage("monday")}
+          className="w-full rounded-2xl bg-panty-panel p-5 text-left active:scale-[0.98] transition border border-white/5 hover:border-panty-pink/40"
         >
-          도망가기 →
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-extrabold text-panty-pink">📅 STAGE 1</span>
+            <span className="text-xs text-panty-mute">▶ 도망가기</span>
+          </div>
+          <div className="text-xl font-extrabold text-panty-ink mb-1">월요일 출근 탈출</div>
+          <div className="text-[11px] text-panty-mute">
+            🛏️ 침실 → 🛋️ 거실 → 🚪 복도 → 🚏 출근길 → 📅 보스
+          </div>
         </button>
+
+        {/* 잠긴 슬롯 — 다음 현실 도피 예고 */}
+        <div className="w-full rounded-2xl bg-panty-panel/40 p-4 mt-3 flex items-center gap-3 opacity-50">
+          <span className="text-2xl">🧧</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-bold text-panty-ink">명절 탈출</div>
+            <div className="text-[11px] text-panty-mute">친척군단의 "결혼은 언제?" 폭격</div>
+          </div>
+          <span className="text-[11px] text-panty-mute whitespace-nowrap">🔒 준비 중</span>
+        </div>
+        <div className="w-full rounded-2xl bg-panty-panel/40 p-4 mt-2 flex items-center gap-3 opacity-50">
+          <span className="text-2xl">📚</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-bold text-panty-ink">중간고사 탈출</div>
+            <div className="text-[11px] text-panty-mute">시험기간의 PTSD</div>
+          </div>
+          <span className="text-[11px] text-panty-mute whitespace-nowrap">🔒 준비 중</span>
+        </div>
 
         <p className="text-[11px] text-panty-mute/60 mt-6 text-center">
           "현실에서 도망치고 싶은 순간을,
