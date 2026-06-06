@@ -217,6 +217,19 @@ interface Pattern {
   steps: PatternStep[];
   tail: number; // 다음 패턴까지 최소 여유(초)
   diff?: number; // 평상 패턴 난이도(1 쉬움 ~ 3 어려움). 진행도에 따라 해금
+  weight?: number; // 등장 가중치(기본 1)
+}
+
+/** 가중치 기반 패턴 추첨 */
+function pickPattern(pool: Pattern[]): Pattern {
+  let total = 0;
+  for (const p of pool) total += p.weight ?? 1;
+  let r = Math.random() * total;
+  for (const p of pool) {
+    r -= p.weight ?? 1;
+    if (r < 0) return p;
+  }
+  return pool[pool.length - 1];
 }
 
 // 평상: diff로 초반 워밍업 → 점진 해금. 모든 점프는 개별 회피(T_SOLO) 기반
@@ -224,8 +237,7 @@ const NORMAL_PATTERNS: Pattern[] = [
   // diff 1 — 단발/코인 (워밍업)
   { id: "single-jump", steps: [{ kind: "ground", gap: 0 }], tail: 0.45, diff: 1 },
   { id: "single-slide", steps: [{ kind: "overhead", gap: 0 }], tail: 0.45, diff: 1 },
-  { id: "coin-arc", steps: [{ kind: "arc", gap: 0 }], tail: 0.4, diff: 1 },
-  { id: "jump-coins", steps: [{ kind: "ground", gap: 0 }, { kind: "line", gap: T_SOLO, n: 4 }], tail: 0.4, diff: 1 },
+  { id: "coin-arc", steps: [{ kind: "arc", gap: 0 }], tail: 0.4, diff: 1, weight: 3 },
   // diff 2 — 두 동작 조합
   { id: "double-jump", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }], tail: 0.5, diff: 2 },
   { id: "jump-slide", steps: [{ kind: "ground", gap: 0 }, { kind: "overhead", gap: T_MIX }], tail: 0.5, diff: 2 },
@@ -1046,13 +1058,33 @@ export class RunScene extends Phaser.Scene {
     this.coins.add(coin);
   }
 
-  /** 점프 궤적을 따라 늘어선 코인 아크를 worldX부터 배치 */
+  /**
+   * 플레이어가 worldX에서 점프한 '실제 궤적'을 시뮬레이션해 그 위에 코인을 배치한다.
+   * updatePlayer와 같은 물리(중력 + 지형 착지)라, 오르막에선 점프가 짧아지고 코인도
+   * 따라 짧아져 — 코인이 지면에 박히거나 점프로 못 닿는 일이 없다. 첫 코인서 점프하면 전부 관통.
+   */
   private spawnCoinArcAt(worldX: number) {
-    const n = Phaser.Math.Between(3, 5);
-    for (let i = 0; i < n; i++) {
-      const t = n === 1 ? 0 : i / (n - 1); // 0..1
-      const arc = Math.sin(t * Math.PI); // 가운데가 가장 높음
-      this.spawnCoinAt(worldX + i * 52, OFF_COIN + arc * 70);
+    const n = 6;
+    const v = this.speed; // 점프 중 수평 진행 속도 ≈ 현재 속도
+    const air = JUMP_AIRTIME;
+    const step = 1 / 60;
+    let simWX = worldX;
+    let simY = this.surfaceYAt(worldX) - FOOT_STAND; // 시작 발 위치
+    let vy = JUMP_V;
+    let placed = 0;
+    for (let t = 0; placed < n; t += step) {
+      while (placed < n && t >= (air * placed) / (n - 1)) {
+        this.spawnCoinAt(simWX, this.surfaceYAt(simWX) - simY); // 코인 화면 y = simY
+        placed++;
+      }
+      vy += GRAVITY * step;
+      simY += vy * step;
+      simWX += v * step;
+      const restY = this.surfaceYAt(simWX) - FOOT_STAND;
+      if (simY >= restY && vy >= 0) {
+        simY = restY; // 지형에 착지 → 이후 코인은 지면을 따라 (박힘 방지)
+        vy = 0;
+      }
     }
   }
 
@@ -1071,7 +1103,7 @@ export class RunScene extends Phaser.Scene {
       const maxDiff = this.elapsed < 14 ? 1 : this.elapsed < 32 ? 2 : 3;
       pool = NORMAL_PATTERNS.filter((p) => (p.diff ?? 1) <= maxDiff);
     }
-    const pat = pool[Math.floor(Math.random() * pool.length)];
+    const pat = pickPattern(pool);
     // 시간(초) 간격 → 현재 속도로 px 변환. 속도가 빨라져도 점프 타이밍이 일정해짐.
     const pps = this.speed;
     const startX = this.nextPatternX;
