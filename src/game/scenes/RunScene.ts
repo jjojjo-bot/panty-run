@@ -284,6 +284,7 @@ export class RunScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Image;
   private playerDmg!: Phaser.GameObjects.Image; // 생명 감소 시 낡음 오버레이
   private playerBody!: Phaser.Physics.Arcade.Body;
+  private bgSky!: Phaser.GameObjects.Graphics;
   private bgFar!: Phaser.GameObjects.Graphics;
   private terrain!: Phaser.GameObjects.Graphics;
   private speedGfx!: Phaser.GameObjects.Graphics;
@@ -447,6 +448,7 @@ export class RunScene extends Phaser.Scene {
     this.buildEmojiTextures();
 
     // 레이어: 원경 언덕(패럴랙스) → 지형 → 스피드라인 → 엔티티 → 플레이어 → 팝업 → HUD
+    this.bgSky = this.add.graphics().setDepth(-30);
     this.bgFar = this.add.graphics().setDepth(-20);
     this.terrain = this.add.graphics().setDepth(-10);
     this.speedGfx = this.add.graphics().setDepth(-5);
@@ -612,6 +614,7 @@ export class RunScene extends Phaser.Scene {
       else this.tryJump();
     });
 
+    this.drawSky();
     this.drawBackground();
     this.drawTerrain();
   }
@@ -786,6 +789,20 @@ export class RunScene extends Phaser.Scene {
     return (
       300 - Math.sin(worldX * 0.0016) * 42 - Math.sin(worldX * 0.0041 + 1.0) * 20
     );
+  }
+
+  /** 구간 배경 — 위(밝은 하늘)→아래(구간 색) 세로 그라데이션으로 입체감·단계 차이 */
+  private drawSky() {
+    const g = this.bgSky;
+    g.clear();
+    const bg = this.bgColor();
+    const r = (bg >> 16) & 0xff;
+    const gg = (bg >> 8) & 0xff;
+    const b = bg & 0xff;
+    const sky =
+      (Math.min(255, r + 28) << 16) | (Math.min(255, gg + 24) << 8) | Math.min(255, b + 50);
+    g.fillGradientStyle(sky, sky, bg, bg, 1);
+    g.fillRect(0, 0, GAME_W, GAME_H);
   }
 
   private drawBackground() {
@@ -1279,6 +1296,7 @@ export class RunScene extends Phaser.Scene {
     this.zoneEndX += zone.length;
     this.terrainColor = zone.ground;
     this.cameras.main.setBackgroundColor(zone.bg);
+    this.drawSky();
     this.cameras.main.flash(320, 30, 30, 50);
     this.flashWarn(zone.name, "#cfe8ff");
   }
@@ -1552,6 +1570,7 @@ export class RunScene extends Phaser.Scene {
       const p = obj as Phaser.GameObjects.Image;
       const vx = (p.getData("vx") as number) ?? -560;
       p.x += vx * dt;
+      p.y = this.surfaceYAt(this.worldScroll + p.x) - 64; // 지형 위 머리 높이 유지(땅 밑 방지)
       // 플레이어를 지나치면(=회피 성공) 종류별로 집계
       if (this.alive && p.x < PLAYER_X - 30 && !p.getData("passed")) {
         p.setData("passed", true);
@@ -1733,17 +1752,19 @@ export class RunScene extends Phaser.Scene {
   }
 
   private buildEmojiTextures() {
+    const DANGER_BG = "rgba(255,80,80,0.30)"; // 장애물(피해라) — 빨강
+    const REWARD_BG = "rgba(255,210,90,0.32)"; // 아이템(먹어라) — 금
     this.makeEmojiTexture("tex_player", PLAYER_EMOJI, 96);
     this.makeEmojiTexture("tex_coin", COIN_EMOJI, 64);
-    this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96);
+    this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96, DANGER_BG);
     this.makeEmojiTexture("tex_chaser", CHASER_EMOJI[this.setup.category], 96);
     if (this.stage?.boss) this.makeEmojiTexture("tex_boss", this.stage.boss.emoji, 128);
     for (const kind of ITEM_KINDS) {
-      this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80);
+      this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80, REWARD_BG);
     }
     for (const id of this.setup.obstacleIds) {
       const emoji = OBSTACLE_EMOJI[id] ?? FALLBACK_OBSTACLE_EMOJI;
-      this.makeEmojiTexture(`tex_${id}`, emoji, 96);
+      this.makeEmojiTexture(`tex_${id}`, emoji, 96, DANGER_BG);
     }
     if (this.stage) {
       const seen = new Set<string>();
@@ -1751,7 +1772,7 @@ export class RunScene extends Phaser.Scene {
         for (const o of zone.obstacles) {
           if (seen.has(o.emoji)) continue;
           seen.add(o.emoji);
-          this.makeEmojiTexture(`tex_zob_${o.emoji}`, o.emoji, 96);
+          this.makeEmojiTexture(`tex_zob_${o.emoji}`, o.emoji, 96, DANGER_BG);
         }
       }
     }
@@ -1828,21 +1849,26 @@ export class RunScene extends Phaser.Scene {
     this.feverGauge = 0;
   }
 
-  /** 멘탈 게이지 바 (좌상단, 🧠 텍스트 옆) */
+  /** 멘탈 게이지 바 (좌상단, 🧠 텍스트 옆) — 체력바처럼 크게 */
   private drawMentalBar() {
     const g = this.mentalBar;
     g.clear();
-    const w = 110;
-    const h = 12;
-    const x = 104;
-    const y = 16;
-    g.fillStyle(0x000000, 0.4);
-    g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 5);
+    const w = 188;
+    const h = 20;
+    const x = 96;
+    const y = 11;
+    g.fillStyle(0x000000, 0.5);
+    g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 7);
     const ratio = Phaser.Math.Clamp(this.mental / MENTAL_MAX, 0, 1);
     const col = this.mental > 50 ? 0x7fe6c0 : this.mental > 20 ? 0xffd84d : 0xff5a4d;
     if (ratio > 0) {
       g.fillStyle(col, 1);
-      g.fillRoundedRect(x, y, Math.max(3, w * ratio), h, 4);
+      g.fillRoundedRect(x, y, Math.max(4, w * ratio), h, 6);
+    }
+    // 멘탈 낮으면 바 테두리 빨강 경고
+    if (this.mental <= 25) {
+      g.lineStyle(2, 0xff3b3b, 0.6 + 0.4 * Math.abs(Math.sin(this.elapsed * 8)));
+      g.strokeRoundedRect(x - 2, y - 2, w + 4, h + 4, 7);
     }
   }
 
@@ -1882,13 +1908,23 @@ export class RunScene extends Phaser.Scene {
     tex.refresh();
   }
 
-  private makeEmojiTexture(key: string, emoji: string, size: number) {
+  private makeEmojiTexture(key: string, emoji: string, size: number, bgColor?: string) {
     if (this.textures.exists(key)) this.textures.remove(key);
     const tex = this.textures.createCanvas(key, size, size);
     if (!tex) return;
     const ctx = tex.getContext();
     ctx.clearRect(0, 0, size, size);
-    ctx.font = `${Math.floor(size * 0.78)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+    // 위험(빨강)/보상(금) 배경 원으로 장애물·아이템 구분
+    if (bgColor) {
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size * 0.46, 0, Math.PI * 2);
+      ctx.fillStyle = bgColor;
+      ctx.fill();
+      ctx.lineWidth = size * 0.03;
+      ctx.strokeStyle = bgColor.replace(/[\d.]+\)$/, "0.9)");
+      ctx.stroke();
+    }
+    ctx.font = `${Math.floor(size * 0.7)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(emoji, size / 2, size / 2);
