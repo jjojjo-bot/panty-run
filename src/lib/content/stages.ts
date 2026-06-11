@@ -20,12 +20,26 @@ export interface StageZone {
   ground: number; // 지형 색
   obstacles: ZoneObstacle[];
   dur: number; // 이 구간 지속 시간(초)
+  // ── 구간별 난이도 에스컬레이션(선택) — 생략 시 엔진 기본값 ──
+  speedCap?: number; // 이 구간 동안 속도 상한(px/s) — 구간이 갈수록 높여 계단식 가속
+  maxDiff?: number; // 평상 패턴 난이도 상한(1 쉬움 ~ 3 어려움)
+  projEvery?: [number, number]; // 투사체(fly) 발사 간격 범위(초)
+  gapScale?: number; // 패턴 사이 여유 배수(1보다 작을수록 촘촘)
+}
+
+export interface BossAttack {
+  emoji: string;
+  label: string; // 경고 배너 문구
+  mental: number; // 피격 시 멘탈 감소
+  kind: "ground" | "barrage"; // ground=지상 큰 장애물(점프 탈출), barrage=보스가 뒤에서 투척(낙하 경고 → 장애물)
+  count?: number; // barrage 투척 수
 }
 
 export interface BossDef {
   emoji: string; // 보스 외형 (📅 거대 월요일)
   name: string; // MONDAY
   escapeDur: number; // 따돌리기까지 버텨야 하는 시간(초) — 도망 진행도
+  attacks?: BossAttack[];
 }
 
 export interface StageDef {
@@ -52,6 +66,9 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "👕", avoid: "slide", mental: 6 }, // 널린 빨래
       ],
       dur: 40,
+      speedCap: 560, // 잠이 덜 깬 워밍업
+      maxDiff: 1,
+      gapScale: 1.15,
     },
     {
       id: "living",
@@ -65,6 +82,9 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "💬", avoid: "fly", mental: 10, label: "김대리 출근했어요?" }, // 회사 카톡
       ],
       dur: 45,
+      speedCap: 650,
+      maxDiff: 2,
+      projEvery: [2.0, 3.0], // 첫 투사체 구간이라 너그럽게
     },
     {
       id: "hallway",
@@ -77,6 +97,9 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🛗", avoid: "slide", mental: 10 }, // 엘리베이터 문
       ],
       dur: 45,
+      speedCap: 730,
+      maxDiff: 3,
+      gapScale: 0.9,
     },
     {
       id: "street",
@@ -89,9 +112,22 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "☕", avoid: "fly", mental: 15, label: "모닝커피" }, // 날아오는 커피
       ],
       dur: 50,
+      speedCap: 820, // 보스 직전 최고조
+      maxDiff: 3,
+      gapScale: 0.8,
+      projEvery: [1.4, 2.2],
     },
   ],
-  boss: { emoji: "📅", name: "MONDAY", escapeDur: 22 },
+  boss: {
+    emoji: "📅",
+    name: "MONDAY",
+    escapeDur: 22,
+    attacks: [
+      { emoji: "🏢", label: "긴급회의!", mental: 24, kind: "ground" },
+      { emoji: "📄", label: "보고서 제출!", mental: 16, kind: "barrage", count: 4 },
+      { emoji: "📧", label: "전체회신!", mental: 12, kind: "barrage", count: 5 },
+    ],
+  },
 };
 
 export const STAGES: Record<string, StageDef> = {

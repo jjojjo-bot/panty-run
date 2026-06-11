@@ -3,7 +3,14 @@ import type { GeneratedRunSetup, SituationCategory } from "@/lib/types";
 import { computeScore } from "@/lib/grade";
 import { getEquippedSkin, tintToHex } from "@/lib/progress";
 import { drawPanty } from "@/lib/pantyArt";
-import { getStage, type StageDef, type AvoidKind, type BossDef } from "@/lib/content/stages";
+import {
+  getStage,
+  type StageDef,
+  type AvoidKind,
+  type BossDef,
+  type BossAttack,
+} from "@/lib/content/stages";
+import { sfx, unlockAudio } from "@/lib/sfx";
 
 export interface RunSceneData {
   setup: GeneratedRunSetup;
@@ -43,16 +50,29 @@ const FEVER_SPEED = 1.25; // 피버 중 가속
 const HIT_GAUGE_PENALTY = 35; // 피격 시 게이지 감소
 
 // ── 리듬 국면(평상 → 위기 → 휴식)으로 긴장-이완 ─────────────────
-// 거리(px) 기준이라 슬로우/로켓으로 속도가 바뀌어도 구간 길이가 일관됨.
-const FIRST_DANGER_X = 5000; // 첫 위기까지 평상 거리(px) — 충분한 워밍업
-const NORMAL_LEN_MIN = 2400; // 평상 구간 길이 범위(px)
-const NORMAL_LEN_MAX = 3200;
-const DANGER_LEN = 2200; // 위기 구간 길이(px)
-const CALM_LEN = 1100; // 휴식(보상) 구간 길이(px)
+// 시간(초) 기준 — px 기준이면 최고 속도에서 위기가 2초대로 반토막 나서
+// 추격자가 들어오자마자 떠나는 문제가 있었다. 진입 시점 속도로 px 환산한다.
+const FIRST_DANGER_SEC = 11; // 첫 위기까지 평상 시간(초) — 워밍업
+const NORMAL_SEC_MIN = 5.5; // 평상 구간 길이 범위(초)
+const NORMAL_SEC_MAX = 7.5;
+const DANGER_SEC = 4.5; // 위기 구간 길이(초) — 추격자가 충분히 위협할 시간
+const CALM_SEC = 2.2; // 휴식(보상) 구간 길이(초)
 const DANGER_SPEED = 1.12; // 위기 중 가속 배수
 const ESCAPE_BONUS = 8; // 위기 탈출 시 비누방울 보너스
 const CHASER_GAP = 78; // 추격자 기본 추격 간격(px, 플레이어 뒤) — 화면에 보이게
 const CHASER_HIT_CLOSE = 0.4; // 위기 중 피격 시 추격자 근접도 증가량
+
+// ── 보스 근접(붙잡힘) 시스템 ──────────────────────────────────
+// 보스전의 진짜 위협: 피격마다 보스가 돌진해 가까워지고, 근접도 1.0이면
+// 멘탈과 무관하게 그랩 → "출근". 클린 주행으로 서서히 거리를 벌린다.
+const BOSS_CLOSE_HIT = 0.32; // 피격 시 근접도 증가(3연속 실수 ≈ 붙잡힘)
+const BOSS_CLOSE_DECAY = 0.055; // 초당 근접도 회복(거리 벌리기)
+const BOSS_FAR_X = 80; // 근접도 0일 때 보스 x
+const BOSS_NEAR_X = 172; // 근접도 1일 때 보스 x — 플레이어를 덮침
+const ESCAPE_HIT_SETBACK = 2.2; // 피격 시 도망 진행 후퇴(초)
+const ESCAPE_NEAR_BONUS = 0.8; // 보스전 니어미스 시 도망 진행 보너스(초)
+const SWEEP_MIN_CLOSE = 0.5; // 이 근접도부터 손 휩쓸기 공격 시작
+const BOSS_THROW_FLIGHT = 0.85; // 투척물 비행 시간(초)
 
 // 내리막에서도 점프가 먹히게 하는 접지 보정값
 const COYOTE_TIME = 0.12; // 지면을 떠난 직후 점프 허용 유예(초)
@@ -239,6 +259,20 @@ interface Pattern {
   weight?: number; // 등장 가중치(기본 1)
 }
 
+/** 색을 밝게/어둡게 (f>1 밝게, f<1 어둡게) — 배경 레이어 색 파생용 */
+function shade(color: number, f: number): number {
+  const r = Math.min(255, Math.round(((color >> 16) & 0xff) * f));
+  const g = Math.min(255, Math.round(((color >> 8) & 0xff) * f));
+  const b = Math.min(255, Math.round((color & 0xff) * f));
+  return (r << 16) | (g << 8) | b;
+}
+
+/** 결정적 의사난수(0~1) — 매 프레임 다시 그려도 모양이 흔들리지 않는 배경 소품용 */
+function hash01(n: number): number {
+  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
 /** 가중치 기반 패턴 추첨 */
 function pickPattern(pool: Pattern[]): Pattern {
   let total = 0;
@@ -274,6 +308,13 @@ const DANGER_PATTERNS: Pattern[] = [
   { id: "d-triple", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }, { kind: "ground", gap: T_SOLO }], tail: 0.5 },
 ];
 
+// 보스전 바닥 패턴: 가볍게 — 보스 공격(투척·휩쓸기)이 무대를 독점하도록
+const BOSS_AMBIENT_PATTERNS: Pattern[] = [
+  { id: "b-jump", steps: [{ kind: "ground", gap: 0 }], tail: 0.5 },
+  { id: "b-slide", steps: [{ kind: "overhead", gap: 0 }], tail: 0.5 },
+  { id: "b-double", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }], tail: 0.55, weight: 0.6 },
+];
+
 // 휴식: 장애물 없이 비누방울 보상만
 const CALM_PATTERNS: Pattern[] = [
   { id: "calm-arc", steps: [{ kind: "arc", gap: 0 }], tail: 0.6 },
@@ -286,8 +327,12 @@ export class RunScene extends Phaser.Scene {
   private playerDmg!: Phaser.GameObjects.Image; // 생명 감소 시 낡음 오버레이
   private playerBody!: Phaser.Physics.Arcade.Body;
   private bgSky!: Phaser.GameObjects.Graphics;
-  private bgFar!: Phaser.GameObjects.Graphics;
+  private bgSkyline!: Phaser.GameObjects.Graphics; // 2.5D: 최원경 스카이라인(0.12×)
+  private bgFar!: Phaser.GameObjects.Graphics; // 원경 언덕(0.4×)
+  private bgMid!: Phaser.GameObjects.Graphics; // 중경 둔덕(0.72×)
   private terrain!: Phaser.GameObjects.Graphics;
+  private propsGfx!: Phaser.GameObjects.Graphics; // 지면 소품(가로등, 1×)
+  private fgStrip!: Phaser.GameObjects.Graphics; // 전경 풀숲 띠(1.3×, 플레이어 앞)
   private speedGfx!: Phaser.GameObjects.Graphics;
   private obstacles!: Phaser.Physics.Arcade.Group;
   private coins!: Phaser.Physics.Arcade.Group;
@@ -372,9 +417,33 @@ export class RunScene extends Phaser.Scene {
   // 보스(MONDAY) — 공격이 아니라 따돌리기
   private boss?: BossDef;
   private bossActive = false;
-  private escapeTimer = 0; // 남은 버티기 시간(0이면 따돌림=클리어)
+  private escapeProgress = 0; // 도망 진행(초) — 클린 주행으로 벌고, 피격 시 후퇴
   private bossImg?: Phaser.GameObjects.Image;
   private escapeBar!: Phaser.GameObjects.Graphics;
+  private escapeLabel?: Phaser.GameObjects.Text;
+  private bossAtkTimer = 0; // 다음 보스 공격까지(초)
+  private bossClose = 0; // 보스 근접도 0(멀리)~1(그랩) — 피격 시 급증, 서서히 회복
+  private bossLungeT = 0; // 피격 직후 돌진 연출 타이머
+  private bossFinale = false; // 따돌리기 성공 후 마지막 발악 연출 중
+  private escapeFlashT = 0; // 도망 바 후퇴(빨강) 피드백 타이머
+  private escapeGainT = 0; // 도망 바 보너스(초록) 피드백 타이머
+  private sweepTimer = 0; // 다음 손 휩쓸기까지(초)
+  private sweepHand?: Phaser.GameObjects.Image;
+  private sweepCollider?: Phaser.Physics.Arcade.Collider;
+  private heartbeatT = 0; // 다음 심장박동까지(초)
+  private vignette!: Phaser.GameObjects.Image; // 위기 빨강 비네트(근접·저멘탈)
+  private lastEff = BASE_SPEED; // 직전 프레임 실효 속도(투척 리드 계산용)
+  private bossArcs: {
+    img: Phaser.GameObjects.Image;
+    marker: Phaser.GameObjects.Text;
+    t: number;
+    T: number;
+    landWX: number;
+    x0: number;
+    y0: number;
+    mental: number;
+    emoji: string;
+  }[] = []; // 보스가 뒤에서 던진 포물선 투척물들
 
   constructor() {
     super("RunScene");
@@ -418,7 +487,7 @@ export class RunScene extends Phaser.Scene {
     this.fever = false;
     this.feverTimer = 0;
     this.phase = "normal";
-    this.phaseEndX = FIRST_DANGER_X;
+    this.phaseEndX = FIRST_DANGER_SEC * this.speed;
     this.nextPatternX = GAME_W + 200;
     this.dangerCount = 0;
     this.chaser = undefined;
@@ -434,8 +503,20 @@ export class RunScene extends Phaser.Scene {
     this.ignoredCalls = 0;
     this.boss = undefined;
     this.bossActive = false;
-    this.escapeTimer = 0;
+    this.escapeProgress = 0;
     this.bossImg = undefined;
+    this.escapeLabel = undefined;
+    this.bossClose = 0;
+    this.bossLungeT = 0;
+    this.bossFinale = false;
+    this.escapeFlashT = 0;
+    this.escapeGainT = 0;
+    this.sweepTimer = 0;
+    this.sweepHand = undefined;
+    this.sweepCollider = undefined;
+    this.heartbeatT = 0;
+    this.lastEff = this.speed;
+    this.bossArcs = [];
     if (this.stage) {
       this.terrainColor = this.stage.zones[0].ground;
     } else {
@@ -448,11 +529,16 @@ export class RunScene extends Phaser.Scene {
 
     this.buildEmojiTextures();
 
-    // 레이어: 원경 언덕(패럴랙스) → 지형 → 스피드라인 → 엔티티 → 플레이어 → 팝업 → HUD
+    // 2.5D 레이어: 하늘 → 스카이라인(0.12×) → 원경(0.4×) → 중경(0.72×) → 지형(1×)
+    // → 소품(1×) → 스피드라인 → 엔티티 → 플레이어 → 전경 풀숲(1.3×) → 팝업 → HUD
     this.bgSky = this.add.graphics().setDepth(-30);
+    this.bgSkyline = this.add.graphics().setDepth(-26);
     this.bgFar = this.add.graphics().setDepth(-20);
+    this.bgMid = this.add.graphics().setDepth(-16);
     this.terrain = this.add.graphics().setDepth(-10);
+    this.propsGfx = this.add.graphics().setDepth(-8);
     this.speedGfx = this.add.graphics().setDepth(-5);
+    this.fgStrip = this.add.graphics().setDepth(30); // 플레이어(5)보다 앞 — 발끝이 풀에 가려지는 깊이감
 
     this.streaks = [];
     for (let i = 0; i < 16; i++) {
@@ -577,6 +663,13 @@ export class RunScene extends Phaser.Scene {
     this.feverBar = this.add.graphics().setDepth(1000);
     this.escapeBar = this.add.graphics().setDepth(1000);
 
+    // 위기 비네트 — 보스 근접·저멘탈 시 화면 가장자리가 붉게 조여온다
+    this.makeVignetteTexture();
+    this.vignette = this.add
+      .image(GAME_W / 2, GAME_H / 2, "tex_vignette")
+      .setDepth(850)
+      .setAlpha(0);
+
     // 위기 경고·탈출 배너 (큰 글씨, 평소 숨김)
     this.warnText = this.add
       .text(GAME_W / 2, 118, "", {
@@ -607,10 +700,21 @@ export class RunScene extends Phaser.Scene {
       .setDepth(1000);
     this.tweens.add({ targets: hint, alpha: 0, delay: 3500, duration: 600 });
 
-    this.input.keyboard?.on("keydown-SPACE", () => this.tryJump());
-    this.input.keyboard?.on("keydown-UP", () => this.tryJump());
-    this.input.keyboard?.on("keydown-DOWN", () => this.startSlide());
+    // 오디오는 사용자 입력(제스처) 이후에만 재생 가능 — 모든 입력에서 unlock
+    this.input.keyboard?.on("keydown-SPACE", () => {
+      unlockAudio();
+      this.tryJump();
+    });
+    this.input.keyboard?.on("keydown-UP", () => {
+      unlockAudio();
+      this.tryJump();
+    });
+    this.input.keyboard?.on("keydown-DOWN", () => {
+      unlockAudio();
+      this.startSlide();
+    });
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      unlockAudio();
       if (p.y > GAME_H / 2) this.startSlide();
       else this.tryJump();
     });
@@ -624,7 +728,8 @@ export class RunScene extends Phaser.Scene {
     if (!this.alive) return;
     const dt = delta / 1000;
     this.elapsed += dt;
-    this.speed = Math.min(MAX_SPEED, this.speed + SPEED_RAMP * dt);
+    // 구간별 속도 상한 — 구간이 진행될수록 상한이 올라가는 계단식 가속
+    this.speed = Math.min(this.currentSpeedCap(), this.speed + SPEED_RAMP * dt);
 
     // 속도 보정: 거북이(슬로우) ↓, 로켓·지뢰 ↑
     const slow = this.slowTimer > 0 ? SLOW_FACTOR : 1;
@@ -634,6 +739,7 @@ export class RunScene extends Phaser.Scene {
       (this.fever ? FEVER_SPEED : 1) *
       (this.phase === "danger" ? DANGER_SPEED : 1);
     const effSpeed = this.speed * slow * boost;
+    this.lastEff = effSpeed;
     this.distance += effSpeed * dt * 0.1;
     this.worldScroll += effSpeed * dt;
     // 황금(점수 2배) — 적용 중 벌어들인 거리만큼 보너스 추가
@@ -668,7 +774,9 @@ export class RunScene extends Phaser.Scene {
 
     this.drawBackground();
     this.drawTerrain();
-    this.drawSpeedLines(dt);
+    this.drawProps();
+    this.drawForeground();
+    this.drawSpeedLines(dt, effSpeed);
     this.updatePlayer(dt);
     this.syncPlayerDmg();
     this.updateObstacles();
@@ -693,14 +801,34 @@ export class RunScene extends Phaser.Scene {
     this.updateChaser(dt);
 
     // 투사체(fly) — 현재 구간에 fly 장애물이 있으면 주기적으로 날아옴
-    if (this.zoneHasFly()) {
+    // (보스전에는 보스 공격이 무대를 독점하도록 끔)
+    if (!this.bossActive && this.zoneHasFly()) {
       this.projTimer -= dt;
       if (this.projTimer <= 0) {
-        this.projTimer = Phaser.Math.FloatBetween(1.6, 2.6);
+        const range = this.stage?.zones[this.zoneIdx].projEvery ?? [1.6, 2.6];
+        this.projTimer = Phaser.Math.FloatBetween(range[0], range[1]);
         this.spawnProjectile();
       }
     }
     this.updateProjectiles(dt);
+    this.updateBossArcs(dt);
+
+    // 위기 비네트 + 심장박동 — 보스가 가까울수록/멘탈이 바닥일수록 조여온다
+    const panic = Math.max(
+      this.bossActive && !this.bossFinale ? this.bossClose : 0,
+      this.mental <= 20 ? 0.45 : 0,
+    );
+    const pulse = Math.abs(Math.sin(this.elapsed * 6));
+    this.vignette.setAlpha(panic > 0 ? panic * (0.5 + 0.4 * pulse) : 0);
+    if (panic > 0.12) {
+      this.heartbeatT -= dt;
+      if (this.heartbeatT <= 0) {
+        this.heartbeatT = Phaser.Math.Linear(1.1, 0.45, Math.min(1, panic));
+        sfx.heartbeat(0.35 + 0.65 * panic);
+      }
+    } else {
+      this.heartbeatT = 0; // 다음 위기 진입 시 즉시 첫 박동
+    }
 
     if (this.isSliding) {
       this.slideTimer -= dt;
@@ -768,6 +896,12 @@ export class RunScene extends Phaser.Scene {
     );
   }
 
+  /** 현재 적용되는 속도 상한 — 스테이지면 구간별 cap, 보스전·무한 모드는 전역 상한 */
+  private currentSpeedCap(): number {
+    if (this.bossActive || !this.stage) return MAX_SPEED;
+    return this.stage.zones[this.zoneIdx].speedCap ?? MAX_SPEED;
+  }
+
   /**
    * 지형 표면의 y좌표 (작을수록 높은 언덕).
    * 진폭을 진행 거리(worldX)에 비례해 키워서 갈수록 경사가 험해진다.
@@ -798,32 +932,81 @@ export class RunScene extends Phaser.Scene {
     g.clear();
     const bg = this.bgColor();
     // 구간 색을 유지한 채 위는 밝게(하늘) 아래는 어둡게(지평) → 입체 + 단계 색조 강조
-    const scale = (f: number) => {
-      const r = Math.min(255, Math.round(((bg >> 16) & 0xff) * f));
-      const gg = Math.min(255, Math.round(((bg >> 8) & 0xff) * f));
-      const b = Math.min(255, Math.round((bg & 0xff) * f));
-      return (r << 16) | (gg << 8) | b;
-    };
-    const top = scale(1.9);
-    const bot = scale(0.5);
+    const top = shade(bg, 1.9);
+    const bot = shade(bg, 0.5);
     g.fillGradientStyle(top, top, bot, bot, 1);
     g.fillRect(0, 0, GAME_W, GAME_H);
   }
 
+  /**
+   * 2.5D 배경 — 스크롤 속도가 다른 3개 레이어로 깊이감.
+   * 모든 모양은 worldScroll에서 결정적으로 계산해 매 프레임 다시 그려도 흔들리지 않는다.
+   */
   private drawBackground() {
-    const g = this.bgFar;
-    const step = 16;
-    const scroll = this.worldScroll * 0.4; // 본 지형보다 천천히
-    g.clear();
-    g.fillStyle(0x000000, 0.18);
-    g.beginPath();
-    g.moveTo(0, GAME_H);
-    for (let x = 0; x <= GAME_W; x += step) {
-      g.lineTo(x, this.farSurfaceAt(scroll + x));
+    const bg = this.bgColor();
+
+    // L1: 최원경 스카이라인(0.12×) — 창문 불빛이 드문드문 켜진 빌딩 실루엣
+    {
+      const g = this.bgSkyline;
+      g.clear();
+      const s = this.worldScroll * 0.12;
+      const bw = 96; // 빌딩 1동 폭(px, 월드 기준)
+      const horizon = 332;
+      const i0 = Math.floor(s / bw);
+      g.fillStyle(shade(bg, 0.62), 0.9);
+      for (let i = i0; i * bw - s < GAME_W + bw; i++) {
+        const x = i * bw - s;
+        const h = 70 + hash01(i * 7.13) * 130;
+        const w = bw - 16 - hash01(i * 3.7) * 26;
+        g.fillRect(x, horizon - h, w, h);
+      }
+      g.fillStyle(shade(bg, 2.6), 0.5);
+      for (let i = i0; i * bw - s < GAME_W + bw; i++) {
+        const x = i * bw - s;
+        const h = 70 + hash01(i * 7.13) * 130;
+        const rows = Math.floor((h - 14) / 30);
+        for (let r = 0; r < rows; r++) {
+          if (hash01(i * 13.7 + r * 1.71) > 0.55) continue; // 꺼진 창
+          g.fillRect(x + 10 + (r % 3) * 17, horizon - h + 10 + r * 30, 7, 9);
+        }
+      }
     }
-    g.lineTo(GAME_W, GAME_H);
-    g.closePath();
-    g.fillPath();
+
+    // L2: 원경 언덕(0.4×) — 구간 색조를 입혀 단계감 유지
+    {
+      const g = this.bgFar;
+      const step = 16;
+      const scroll = this.worldScroll * 0.4;
+      g.clear();
+      g.fillStyle(shade(bg, 0.42), 0.92);
+      g.beginPath();
+      g.moveTo(0, GAME_H);
+      for (let x = 0; x <= GAME_W; x += step) {
+        g.lineTo(x, this.farSurfaceAt(scroll + x));
+      }
+      g.lineTo(GAME_W, GAME_H);
+      g.closePath();
+      g.fillPath();
+    }
+
+    // L3: 중경 둔덕(0.72×) — 지형과 원경 사이를 메우는 한 겹
+    {
+      const g = this.bgMid;
+      const step = 16;
+      const s = this.worldScroll * 0.72;
+      g.clear();
+      g.fillStyle(shade(this.terrainColor, 0.55), 1);
+      g.beginPath();
+      g.moveTo(0, GAME_H);
+      for (let x = 0; x <= GAME_W; x += step) {
+        const wx = s + x;
+        const y = 354 - Math.sin(wx * 0.004) * 26 - Math.sin(wx * 0.0093 + 1.7) * 14;
+        g.lineTo(x, y);
+      }
+      g.lineTo(GAME_W, GAME_H);
+      g.closePath();
+      g.fillPath();
+    }
   }
 
   private drawTerrain() {
@@ -841,6 +1024,15 @@ export class RunScene extends Phaser.Scene {
     g.closePath();
     g.fillPath();
 
+    // 표면 하이라이트 — 지면 윗면이 밝아 '길'의 두께가 생긴다(유사 3D)
+    g.lineStyle(6, shade(this.terrainColor, 1.45), 0.55);
+    g.beginPath();
+    g.moveTo(0, this.surfaceYAt(this.worldScroll) + 3);
+    for (let x = step; x <= GAME_W; x += step) {
+      g.lineTo(x, this.surfaceYAt(this.worldScroll + x) + 3);
+    }
+    g.strokePath();
+
     g.lineStyle(3, 0x4a4a63, 1);
     g.beginPath();
     g.moveTo(0, this.surfaceYAt(this.worldScroll));
@@ -848,17 +1040,89 @@ export class RunScene extends Phaser.Scene {
       g.lineTo(x, this.surfaceYAt(this.worldScroll + x));
     }
     g.strokePath();
+
+    // 지면 틱 — 월드에 고정된 빗금이 지나가며 체감 속도를 만든다
+    g.lineStyle(2, shade(this.terrainColor, 0.55), 0.85);
+    const tickGap = 56;
+    const t0 = Math.floor(this.worldScroll / tickGap);
+    for (let i = t0; i * tickGap - this.worldScroll < GAME_W + tickGap; i++) {
+      const wx = i * tickGap;
+      const sx = wx - this.worldScroll;
+      const sy = this.surfaceYAt(wx);
+      g.beginPath();
+      g.moveTo(sx, sy + 6);
+      g.lineTo(sx - 8, sy + 18);
+      g.strokePath();
+    }
   }
 
-  /** 속도가 빠를수록 진해지는 스피드라인 */
-  private drawSpeedLines(dt: number) {
+  /** 지면 소품(1×) — 일정 간격의 가로등이 휙휙 지나가며 속도·공간감을 만든다 */
+  private drawProps() {
+    const g = this.propsGfx;
+    g.clear();
+    const gap = 430;
+    const i0 = Math.floor(this.worldScroll / gap);
+    for (let i = i0; i * gap - this.worldScroll < GAME_W + 80; i++) {
+      const wx = i * gap + hash01(i * 1.91) * 140;
+      const sx = wx - this.worldScroll;
+      if (sx < -40) continue;
+      const sy = this.surfaceYAt(wx);
+      const h = 82 + hash01(i * 5.3) * 18;
+      g.lineStyle(4, shade(this.terrainColor, 0.45), 1);
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.lineTo(sx, sy - h);
+      g.strokePath();
+      // 불빛 + 은은한 광원
+      g.fillStyle(0xffd87a, 0.16);
+      g.fillCircle(sx, sy - h - 4, 17);
+      g.fillStyle(0xffd87a, 0.95);
+      g.fillCircle(sx, sy - h - 4, 6);
+    }
+  }
+
+  /** 전경 풀숲 띠(1.3×) — 지형보다 빨리 흘러 가장 강한 깊이 단서가 된다 */
+  private drawForeground() {
+    const g = this.fgStrip;
+    g.clear();
+    const s = this.worldScroll * 1.3;
+    const step = 16;
+    g.fillStyle(shade(this.terrainColor, 0.32), 1);
+    g.beginPath();
+    g.moveTo(0, GAME_H);
+    for (let x = 0; x <= GAME_W; x += step) {
+      const wx = s + x;
+      const y = 463 - Math.sin(wx * 0.02) * 5 - Math.sin(wx * 0.053 + 2) * 4;
+      g.lineTo(x, y);
+    }
+    g.lineTo(GAME_W, GAME_H);
+    g.closePath();
+    g.fillPath();
+    // 풀잎 틱
+    g.lineStyle(2, shade(this.terrainColor, 0.5), 0.9);
+    const bladeGap = 26;
+    const b0 = Math.floor(s / bladeGap);
+    for (let i = b0; i * bladeGap - s < GAME_W + bladeGap; i++) {
+      const sx = i * bladeGap - s;
+      const base = 466 - Math.sin(i * bladeGap * 0.02) * 5;
+      const lean = hash01(i * 2.7) * 6 - 3;
+      g.beginPath();
+      g.moveTo(sx, base + 6);
+      g.lineTo(sx + lean, base - 4 - hash01(i * 9.1) * 6);
+      g.strokePath();
+    }
+  }
+
+  /** 속도가 빠를수록 진해지는 스피드라인 — 실효 속도(부스트 포함) 기준 */
+  private drawSpeedLines(dt: number, effSpeed: number) {
     const g = this.speedGfx;
     g.clear();
-    const intensity = Phaser.Math.Clamp((this.speed - BASE_SPEED) / 500, 0, 1);
+    let intensity = Phaser.Math.Clamp((effSpeed - BASE_SPEED) / 520, 0, 1);
+    if (this.bossActive) intensity = Math.min(1, intensity + 0.3); // 보스전엔 늘 질주감
     if (intensity < 0.03) return;
-    g.lineStyle(2, 0xffffff, 0.08 + 0.16 * intensity);
+    g.lineStyle(2, 0xffffff, 0.08 + 0.18 * intensity);
     for (const s of this.streaks) {
-      s.x -= this.speed * 1.4 * dt;
+      s.x -= effSpeed * 1.5 * dt;
       if (s.x < -s.len) {
         s.x = GAME_W + Math.random() * 140;
         s.y = Phaser.Math.Between(40, GAME_H - 90);
@@ -962,7 +1226,17 @@ export class RunScene extends Phaser.Scene {
           this.nearMisses += 1;
           if (this.multTimer > 0) this.bonusScore += 25; // 점수 2배: 아슬 추가분
           this.addCombo(true);
+          sfx.near();
           this.popText(PLAYER_X, pb.top - 18, "아슬!", "#ff5fa2");
+          // 보스전: 아슬 회피가 도망 진행을 앞당긴다 — 위험을 감수할 이유
+          if (this.bossActive && !this.bossFinale && this.boss) {
+            this.escapeProgress = Math.min(
+              this.boss.escapeDur,
+              this.escapeProgress + ESCAPE_NEAR_BONUS,
+            );
+            this.escapeGainT = 0.5;
+            this.popText(PLAYER_X, pb.top - 40, `도망 +${ESCAPE_NEAR_BONUS}s`, "#7cfc9b");
+          }
         }
       }
       go.setData("psx", sx);
@@ -1009,12 +1283,14 @@ export class RunScene extends Phaser.Scene {
       this.coyote = 0;
       this.airJumpUsed = false;
       this.squash(0.82, 1.22); // 점프 스트레치
+      sfx.jump();
     } else if (this.coffeeTimer > 0 && !this.airJumpUsed) {
       // 카페인: 공중에서 한 번 더 (2단 점프)
       this.playerVy = jv * 0.9;
       this.airJumpUsed = true;
       this.squash(0.82, 1.22);
       this.dustPuff(this.player.x, this.player.y + 28);
+      sfx.airJump();
     }
   }
 
@@ -1096,6 +1372,7 @@ export class RunScene extends Phaser.Scene {
     if (this.multTimer > 0) this.bonusScore += 10; // 점수 2배: 코인 추가분
     if (this.fever) this.bonusScore += 10; // 피버 보너스
     this.addCombo(false);
+    sfx.coin();
     this.popText(x, y, "+1", "#ffd84d");
     const ring = this.add
       .circle(x, y, 6, 0xffd84d, 0)
@@ -1211,11 +1488,13 @@ export class RunScene extends Phaser.Scene {
   /** 현재 국면 패턴 풀에서 하나 뽑아 배치하고 nextPatternX를 전진 */
   private spawnNextPattern() {
     let pool: Pattern[];
-    if (this.phase === "danger") pool = DANGER_PATTERNS;
+    if (this.bossActive) pool = BOSS_AMBIENT_PATTERNS;
+    else if (this.phase === "danger") pool = DANGER_PATTERNS;
     else if (this.phase === "calm") pool = CALM_PATTERNS;
     else {
-      // 평상: 진행도에 따라 난이도 해금 — 초반 14초는 단발/코인만, 32초+ 전체
-      const maxDiff = this.elapsed < 14 ? 1 : this.elapsed < 32 ? 2 : 3;
+      // 평상 난이도 상한 — 스테이지면 구간 데이터, 무한 모드면 경과 시간으로 해금
+      const zoneDiff = this.stage ? this.stage.zones[this.zoneIdx].maxDiff : undefined;
+      const maxDiff = zoneDiff ?? (this.elapsed < 14 ? 1 : this.elapsed < 32 ? 2 : 3);
       pool = NORMAL_PATTERNS.filter((p) => (p.diff ?? 1) <= maxDiff);
     }
     const pat = pickPattern(pool);
@@ -1241,13 +1520,18 @@ export class RunScene extends Phaser.Scene {
           break;
       }
     }
-    // 패턴 사이 여유(초) — 평상은 초반 넉넉 → 점점 좁아짐, 위기 촘촘, 휴식 넉넉
-    const extraSec =
-      this.phase === "danger"
-        ? 0.5
-        : this.phase === "calm"
-          ? 0.8
-          : Phaser.Math.Clamp(1.15 - this.elapsed * 0.008, 0.7, 1.15);
+    // 패턴 사이 여유(초) — 평상은 구간별 gapScale로 갈수록 촘촘, 위기 촘촘, 휴식 넉넉
+    let extraSec: number;
+    if (this.bossActive) {
+      extraSec = 0.95; // 보스 공격이 낄 자리를 남긴다
+    } else if (this.phase === "danger") {
+      extraSec = 0.5;
+    } else if (this.phase === "calm") {
+      extraSec = 0.8;
+    } else {
+      extraSec = Phaser.Math.Clamp(1.15 - this.elapsed * 0.008, 0.7, 1.15);
+      if (this.stage) extraSec *= this.stage.zones[this.zoneIdx].gapScale ?? 1;
+    }
     this.nextPatternX = startX + (cursorSec + pat.tail + extraSec) * pps;
   }
 
@@ -1262,14 +1546,17 @@ export class RunScene extends Phaser.Scene {
   private enterNormal() {
     this.phase = "normal";
     this.phaseEndX =
-      this.worldScroll + Phaser.Math.Between(NORMAL_LEN_MIN, NORMAL_LEN_MAX);
+      this.worldScroll +
+      Phaser.Math.FloatBetween(NORMAL_SEC_MIN, NORMAL_SEC_MAX) * this.speed;
   }
 
   private enterDanger() {
     this.phase = "danger";
     this.dangerCount += 1;
-    this.phaseEndX = this.worldScroll + DANGER_LEN;
+    // 위기 중 가속(DANGER_SPEED)까지 반영해 실제 체감 시간을 맞춘다
+    this.phaseEndX = this.worldScroll + DANGER_SEC * this.speed * DANGER_SPEED;
     this.spawnChaser();
+    sfx.warn();
     this.flashWarn(`⚠️ ${CHASER_LABEL[this.setup.category]} 추격!!`, "#ff5a6a");
     this.cameras.main.shake(260, 0.012);
     this.cameras.main.flash(220, 255, 80, 80);
@@ -1277,7 +1564,7 @@ export class RunScene extends Phaser.Scene {
 
   private enterCalm() {
     this.phase = "calm";
-    this.phaseEndX = this.worldScroll + CALM_LEN;
+    this.phaseEndX = this.worldScroll + CALM_SEC * this.speed;
     this.escapeChaser();
   }
 
@@ -1305,6 +1592,7 @@ export class RunScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(zone.bg);
     this.drawSky();
     this.cameras.main.flash(320, 30, 30, 50);
+    sfx.zone();
     this.flashWarn(zone.name, "#cfe8ff");
   }
 
@@ -1313,7 +1601,13 @@ export class RunScene extends Phaser.Scene {
     if (!this.stage?.boss) return;
     this.boss = this.stage.boss;
     this.bossActive = true;
-    this.escapeTimer = this.boss.escapeDur;
+    this.escapeProgress = 0;
+    this.bossClose = 0;
+    this.bossLungeT = 0;
+    this.bossFinale = false;
+    this.bossAtkTimer = 3.5; // 첫 공격까지
+    this.sweepTimer = 2.5;
+    this.heartbeatT = 0; // 등장과 동시에 첫 심장박동
     // 보스 동안 위기 국면 고정(빡빡한 패턴 + 가속)
     this.phase = "danger";
     this.phaseEndX = Number.MAX_SAFE_INTEGER;
@@ -1330,28 +1624,316 @@ export class RunScene extends Phaser.Scene {
     // 거대 월요일 등장
     this.bossImg = this.add.image(-140, GAME_H / 2 - 30, "tex_boss").setDepth(8);
     this.bossImg.setDisplaySize(170, 170);
-    this.tweens.add({ targets: this.bossImg, x: 95, duration: 900, ease: "Back.easeOut" });
+    this.tweens.add({ targets: this.bossImg, x: BOSS_FAR_X, duration: 900, ease: "Back.easeOut" });
+    // 도망 게이지 라벨
+    this.escapeLabel = this.add
+      .text(GAME_W / 2 - 188, GAME_H - 21, "🏃 도망", {
+        fontSize: "14px",
+        color: "#7cfc9b",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        fontStyle: "bold",
+      })
+      .setOrigin(1, 0.5)
+      .setDepth(1000);
+    sfx.roar();
+    sfx.warn();
     this.flashWarn(`📅 ${this.boss.name} 출근 강요!!`, "#ff3b3b");
     this.cameras.main.shake(420, 0.02);
     this.cameras.main.flash(420, 255, 50, 50);
   }
 
-  /** 보스 추격 연출 + 도망 진행도 갱신 */
+  /** 보스 추격: 근접도(그랩 위협) + 도망 진행 + 공격 가속 */
   private updateBoss(dt: number) {
-    this.escapeTimer = Math.max(0, this.escapeTimer - dt);
+    this.escapeFlashT = Math.max(0, this.escapeFlashT - dt);
+    this.escapeGainT = Math.max(0, this.escapeGainT - dt);
+    if (this.bossFinale) {
+      this.drawEscapeBar();
+      return; // 피날레 연출 중 — 진행·공격·그랩 정지
+    }
+    const dur = this.boss!.escapeDur;
+    this.escapeProgress = Math.min(dur, this.escapeProgress + dt);
+    this.bossClose = Math.max(0, this.bossClose - BOSS_CLOSE_DECAY * dt);
+    if (this.bossLungeT > 0) this.bossLungeT -= dt;
+
     const b = this.bossImg;
     if (b) {
-      // 위협적으로 둥실거리며 따라옴 (멘탈 낮을수록 바짝)
-      const close = 1 - this.mental / MENTAL_MAX;
-      b.x = Phaser.Math.Linear(b.x, 95 - close * 32, 0.04) + Math.sin(this.elapsed * 2.4) * 6;
-      b.y = GAME_H / 2 - 30 + Math.sin(this.elapsed * 1.7) * 14;
-      b.rotation = Math.sin(this.elapsed * 3) * 0.06;
+      const close = this.bossClose;
+      // 피격 직후 돌진 스파이크(가까울수록 작게 — 그랩 직전 과침투 방지)
+      const lunge =
+        this.bossLungeT > 0
+          ? Math.sin((1 - this.bossLungeT / 0.5) * Math.PI) * 64 * (1 - close * 0.5)
+          : 0;
+      const tx = Phaser.Math.Linear(BOSS_FAR_X, BOSS_NEAR_X, close) + lunge;
+      b.x = Phaser.Math.Linear(b.x, tx, 0.12) + Math.sin(this.elapsed * 2.4) * 5;
+      b.y = 205 + close * 56 + Math.sin(this.elapsed * 1.7) * 13;
+      const sz = 170 + close * 62; // 가까울수록 거대해진다
+      b.setDisplaySize(sz, sz);
+      b.rotation = Math.sin(this.elapsed * 3) * (0.05 + close * 0.06);
     }
     this.drawEscapeBar();
-    if (this.escapeTimer <= 0) this.clearStage();
+
+    // 근접도 1.0 → 붙잡힘 (멘탈과 무관한 보스전 고유 패배)
+    if (this.bossClose >= 1) {
+      this.grabPlayer();
+      return;
+    }
+
+    // 공격 — 도망이 찰수록 다급하게 몰아침 (6초 → 2.6초 간격)
+    if (this.boss?.attacks?.length) {
+      this.bossAtkTimer -= dt;
+      if (this.bossAtkTimer <= 0) {
+        const ratio = this.escapeProgress / dur;
+        this.bossAtkTimer =
+          Phaser.Math.Linear(6, 2.6, ratio) + Phaser.Math.FloatBetween(-0.4, 0.4);
+        this.spawnBossAttack();
+      }
+    }
+    this.updateSweep(dt);
+
+    if (this.escapeProgress >= dur) this.beginEscapeFinale();
   }
 
-  /** 도망 진행도 게이지 (하단 중앙) — 다 차면 따돌림. 상단 멘탈 바와 분리 */
+  /** 보스가 바짝 붙으면(근접도 0.5+) 손을 뻗어 발밑을 쓸어간다 — 점프 강제 */
+  private updateSweep(dt: number) {
+    const hand = this.sweepHand;
+    if (hand?.active) {
+      hand.y = this.surfaceYAt(this.worldScroll + hand.x) - 18;
+      (hand.body as Phaser.Physics.Arcade.Body).updateFromGameObject();
+    }
+    if (this.bossClose < SWEEP_MIN_CLOSE) return;
+    this.sweepTimer -= dt;
+    if (this.sweepTimer > 0) return;
+    this.sweepTimer = Phaser.Math.FloatBetween(2.8, 4.2);
+    this.fireSweep();
+  }
+
+  private fireSweep() {
+    if (this.sweepHand?.active) return;
+    sfx.sweep();
+    this.popText(70, this.surfaceYAt(this.worldScroll + 70) - 74, "잡는다?!", "#ff8a8a");
+    const hand = this.add.image(-50, 0, "tex_hand").setDepth(6);
+    hand.setDisplaySize(58, 58);
+    hand.setAngle(90); // 손끝이 진행 방향
+    hand.setData("mental", 14);
+    this.physics.add.existing(hand);
+    const hb = hand.body as Phaser.Physics.Arcade.Body;
+    hb.setAllowGravity(false);
+    hb.moves = false;
+    hb.setSize(50, 26, true);
+    this.sweepCollider?.destroy(); // 직전 휩쓸기의 충돌체 정리(항상 1개만 유지)
+    this.sweepCollider = this.physics.add.overlap(this.player, hand, () =>
+      this.hitObstacle(hand),
+    );
+    this.sweepHand = hand;
+    // 빼꼼(예고) → 휙 쓸기 → 복귀
+    this.tweens.add({
+      targets: hand,
+      x: 16,
+      duration: 220,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        if (!hand.active) return;
+        this.tweens.add({
+          targets: hand,
+          x: PLAYER_X + 70,
+          delay: 240,
+          duration: 460,
+          ease: "Quad.easeIn",
+          yoyo: true,
+          hold: 80,
+          onComplete: () => {
+            hand.destroy();
+            if (this.sweepHand === hand) this.sweepHand = undefined;
+          },
+        });
+      },
+    });
+  }
+
+  /** 근접도 1.0 — MONDAY에게 붙잡힘. 멘탈이 남아 있어도 출근이다. */
+  private grabPlayer() {
+    if (!this.alive) return;
+    this.alive = false;
+    this.physics.pause();
+    sfx.grab();
+    this.vignette.setAlpha(0.85);
+    this.cameras.main.shake(500, 0.025);
+    this.cameras.main.flash(200, 255, 40, 40);
+    if (this.bossImg) {
+      this.tweens.killTweensOf(this.bossImg);
+      this.tweens.add({
+        targets: this.bossImg,
+        x: this.player.x + 8,
+        y: this.player.y - 30,
+        displayWidth: 250,
+        displayHeight: 250,
+        duration: 360,
+        ease: "Quad.easeIn",
+      });
+    }
+    this.popText(this.player.x, this.player.y - 66, "붙잡혔다!!", "#ff5a6a", true);
+    // 빤쓰 버둥거림
+    this.tweens.add({
+      targets: this.player,
+      angle: { from: -14, to: 14 },
+      duration: 90,
+      yoyo: true,
+      repeat: 8,
+    });
+    this.finishToOffice("월요일에게 붙잡혔다…");
+  }
+
+  /** 따돌리기 완료 — 마지막 발악(빗나가는 돌진) 연출 후 클리어 */
+  private beginEscapeFinale() {
+    if (this.bossFinale) return;
+    this.bossFinale = true;
+    this.bossClose = 0;
+    this.invincibleTimer = 99; // 연출 중 무적 — 남은 장애물은 부수며 질주
+    // 진행 중인 손 휩쓸기 회수
+    if (this.sweepHand?.active) {
+      this.tweens.killTweensOf(this.sweepHand);
+      this.sweepHand.destroy();
+      this.sweepHand = undefined;
+    }
+    sfx.roar();
+    this.flashWarn("📅 마지막 발악!!", "#ff3b3b");
+    this.cameras.main.shake(280, 0.016);
+    const b = this.bossImg;
+    if (b) {
+      this.tweens.killTweensOf(b);
+      // 최후의 돌진 — 머리 위를 아슬하게 스쳐 빗나간다
+      this.tweens.add({
+        targets: b,
+        x: PLAYER_X - 24,
+        y: this.player.y - 96,
+        duration: 480,
+        ease: "Quad.easeIn",
+        onComplete: () => {
+          sfx.clear();
+          this.cameras.main.flash(260, 255, 255, 255);
+          this.popText(this.player.x + 12, this.player.y - 60, "따돌렸다!!", "#7cfc9b", true);
+          this.squash(0.7, 1.35);
+          this.tweens.add({
+            targets: b,
+            x: -280,
+            angle: -50,
+            alpha: 0,
+            duration: 800,
+            ease: "Quad.easeIn",
+          });
+        },
+      });
+    }
+    this.time.delayedCall(1700, () => this.clearStage());
+  }
+
+  /** 보스 공격 발동 — attacks 데이터에서 하나 골라 종류별로 스폰 */
+  private spawnBossAttack() {
+    const attacks = this.boss?.attacks;
+    if (!attacks?.length) return;
+    const atk = attacks[Math.floor(Math.random() * attacks.length)];
+    sfx.warn();
+    this.flashWarn(`📅 ${atk.label}`, "#ffd84d");
+    this.cameras.main.shake(160, 0.008);
+    if (atk.kind === "ground") this.atkGround(atk);
+    else this.bossBarrage(atk);
+  }
+
+  /** 지상 큰 장애물(회의실 등) — 점프로 탈출 */
+  private atkGround(atk: BossAttack) {
+    const obs = this.add.image(0, 0, `tex_batk_${atk.emoji}`);
+    obs.setDisplaySize(88, 88);
+    const wx = this.worldScroll + GAME_W + 60;
+    obs.setData("worldX", wx);
+    obs.setData("off", 42);
+    obs.setData("psx", GAME_W + 60);
+    obs.setData("mental", atk.mental);
+    this.physics.add.existing(obs);
+    const body = obs.body as Phaser.Physics.Arcade.Body;
+    body.setAllowGravity(false);
+    body.moves = false;
+    body.setSize(62, 64, true);
+    this.obstacles.add(obs);
+  }
+
+  /** 투사체 다발(서류·메일) — 연속으로 날아옴, 슬라이드로 회피 */
+  /**
+   * 투척 다발 — 보스가 '뒤에서' 포물선으로 던진다.
+   * 전방 지면에 ⚠️ 낙하 경고가 먼저 찍히고, 착탄물이 장애물로 남아 점프로 넘는다.
+   * 추격 판타지(뒤에서 공격) + 공정한 텔레그래프(낙하지점 예고)를 동시에 만족.
+   */
+  private bossBarrage(atk: BossAttack) {
+    const n = atk.count ?? 4;
+    for (let i = 0; i < n; i++) {
+      this.time.delayedCall(i * 170, () => {
+        if (!this.alive || !this.bossActive || this.bossFinale) return;
+        // 착탄 후 플레이어 도달까지 0.9초 + 연속 착탄은 점프 리듬(1초) 간격
+        this.bossThrow(atk, 0.9 + i * 1.0);
+      });
+    }
+  }
+
+  /** 투척 1발 — extraSec: 착탄 지점이 착탄 후 플레이어에게 닿기까지의 시간(초) */
+  private bossThrow(atk: BossAttack, extraSec: number) {
+    const T = BOSS_THROW_FLIGHT;
+    const landWX = this.worldScroll + PLAYER_X + this.lastEff * (T + extraSec);
+    sfx.toss();
+    const marker = this.add
+      .text(0, 0, "⚠️", { fontSize: "20px" })
+      .setOrigin(0.5)
+      .setDepth(3);
+    const x0 = this.bossImg?.x ?? 90;
+    const y0 = (this.bossImg?.y ?? 205) - 30;
+    const img = this.add.image(x0, y0, `tex_batk_${atk.emoji}`).setDepth(7);
+    img.setDisplaySize(40, 40);
+    this.bossArcs.push({ img, marker, t: 0, T, landWX, x0, y0, mental: atk.mental, emoji: atk.emoji });
+  }
+
+  /** 투척물 포물선 + 낙하 마커 + 착탄 → 지상 장애물(서류 더미)로 전환 */
+  private updateBossArcs(dt: number) {
+    for (let i = this.bossArcs.length - 1; i >= 0; i--) {
+      const a = this.bossArcs[i];
+      a.t += dt;
+      const p = Math.min(1, a.t / a.T);
+      const landSx = a.landWX - this.worldScroll;
+      const landY = this.surfaceYAt(a.landWX);
+      a.marker.setPosition(landSx, landY - 16);
+      a.marker.setAlpha(0.45 + 0.55 * Math.abs(Math.sin(a.t * 16)));
+      a.img.x = Phaser.Math.Linear(a.x0, landSx, p);
+      a.img.y = Phaser.Math.Linear(a.y0, landY - 14, p) - Math.sin(p * Math.PI) * 150;
+      a.img.rotation += dt * 9;
+      if (p >= 1) {
+        sfx.impact();
+        this.dustPuff(a.img.x, landY);
+        this.spawnPileAt(a.landWX, a.mental, a.emoji);
+        a.img.destroy();
+        a.marker.destroy();
+        this.bossArcs.splice(i, 1);
+      }
+    }
+  }
+
+  /** 착탄물이 남긴 지상 장애물 — 일반 장애물과 같은 스크롤·니어미스 규칙을 탄다 */
+  private spawnPileAt(worldX: number, mental: number, emoji: string) {
+    const obs = this.add.image(0, 0, `tex_batk_${emoji}`);
+    obs.setDisplaySize(46, 46);
+    obs.setData("worldX", worldX);
+    obs.setData("off", 22);
+    obs.setData("psx", worldX - this.worldScroll);
+    obs.setData("mental", mental);
+    this.physics.add.existing(obs);
+    const body = obs.body as Phaser.Physics.Arcade.Body;
+    body.setAllowGravity(false);
+    body.moves = false;
+    body.setSize(36, 34, true);
+    this.obstacles.add(obs);
+  }
+
+  /**
+   * 도망 진행도 게이지 (하단 중앙) — 다 차면 따돌림.
+   * 피격 후퇴 직후엔 빨강 점멸, 니어미스 보너스 직후엔 초록 하이라이트로
+   * "내 플레이가 게이지를 움직인다"를 보여준다.
+   */
   private drawEscapeBar() {
     if (!this.boss) return;
     const g = this.escapeBar;
@@ -1362,28 +1944,24 @@ export class RunScene extends Phaser.Scene {
     const y = GAME_H - 30;
     g.fillStyle(0x000000, 0.55);
     g.fillRoundedRect(x - 2, y - 2, w + 4, h + 4, 7);
-    const ratio = 1 - this.escapeTimer / this.boss.escapeDur; // 진행도
-    g.fillStyle(0x7cfc9b, 1);
-    g.fillRoundedRect(x, y, Math.max(4, w * Phaser.Math.Clamp(ratio, 0, 1)), h, 6);
+    const ratio = Phaser.Math.Clamp(this.escapeProgress / this.boss.escapeDur, 0, 1);
+    const flashing = this.escapeFlashT > 0 && Math.sin(this.elapsed * 30) > 0;
+    const col = flashing ? 0xff5a4d : this.escapeGainT > 0 ? 0xbdffd2 : 0x7cfc9b;
+    g.fillStyle(col, 1);
+    g.fillRoundedRect(x, y, Math.max(4, w * ratio), h, 6);
+    if (this.escapeFlashT > 0) {
+      g.lineStyle(2, 0xff3b3b, 0.9);
+      g.strokeRoundedRect(x - 2, y - 2, w + 4, h + 4, 7);
+    }
   }
 
-  /** 보스 따돌림 성공 → 클리어 */
+  /** 보스 따돌림 성공 → 클리어 (보스 퇴장은 피날레 연출이 이미 처리) */
   private clearStage() {
     if (!this.alive) return;
     this.alive = false;
     this.physics.pause();
     this.flashWarn("탈출 성공! 🏖️", "#7cfc9b");
     this.cameras.main.flash(300, 120, 255, 160);
-    if (this.bossImg) {
-      this.tweens.add({
-        targets: this.bossImg,
-        x: -220,
-        alpha: 0,
-        angle: -30,
-        duration: 900,
-        ease: "Quad.easeIn",
-      });
-    }
     this.tweens.add({ targets: this.player, y: this.player.y - 30, yoyo: true, repeat: 2, duration: 250 });
     this.time.delayedCall(1600, () => {
       this.onGameOver({
@@ -1462,6 +2040,7 @@ export class RunScene extends Phaser.Scene {
     this.chaserClose = 0;
     this.coinCount += ESCAPE_BONUS;
     if (this.multTimer > 0) this.bonusScore += ESCAPE_BONUS * 10;
+    sfx.success();
     this.flashWarn("탈출 성공! 🎉", "#7cfc9b");
     this.popText(this.player.x, this.player.y - 50, `+${ESCAPE_BONUS} 🫧`, "#7cfc9b", true);
     this.cameras.main.flash(160, 120, 255, 160);
@@ -1653,6 +2232,8 @@ export class RunScene extends Phaser.Scene {
         break;
     }
     const bad = kind === "mine";
+    if (bad) sfx.bad();
+    else sfx.item();
     const accent = bad ? 0xb58b5a : 0xffe08a;
     this.popText(x, y - 10, ITEM_LABEL[kind], bad ? "#d2a679" : "#ffe08a", true);
     const ring = this.add
@@ -1699,17 +2280,19 @@ export class RunScene extends Phaser.Scene {
     this.loseLife(go);
   }
 
-  /** 생명 1 차감 — 0이면 게임오버, 아니면 속도 초기화 + 짧은 무적 */
+  /** 멘탈 차감 — 0이면 게임오버. 보스전에선 보스가 돌진해 가까워진다. */
   private loseLife(go: Phaser.GameObjects.Image) {
     const dmg = (go.getData("mental") as number) ?? DEFAULT_DAMAGE;
     this.mental = Math.max(0, this.mental - dmg);
+    sfx.hit();
     if (this.mental <= 0) {
       this.smash(go);
       this.die(); // 멘탈 붕괴 → 출근
       return;
     }
     this.smash(go); // 부딪힌 장애물 제거
-    this.speed = this.baseSpeed; // 속도 초기화로 숨통
+    // 속도는 구간 하한까지만 후퇴 — 실수해도 후반 구간의 압박은 유지
+    this.speed = Math.max(this.baseSpeed, this.currentSpeedCap() * 0.7);
     this.invincibleTimer = Math.max(this.invincibleTimer, HIT_IFRAMES);
     this.combo = 0; // 콤보 끊김
     this.feverGauge = Math.max(0, this.feverGauge - HIT_GAUGE_PENALTY);
@@ -1724,6 +2307,15 @@ export class RunScene extends Phaser.Scene {
     if (this.phase === "danger" && this.chaser) {
       this.chaserClose = Math.min(1, this.chaserClose + CHASER_HIT_CLOSE);
     }
+    // 보스전 피격 → 보스 돌진(근접도 급증) + 도망 진행 후퇴. 3연속 실수면 붙잡힌다.
+    if (this.bossActive && !this.bossFinale) {
+      this.bossClose = Math.min(1, this.bossClose + BOSS_CLOSE_HIT);
+      this.bossLungeT = 0.5;
+      this.escapeProgress = Math.max(0, this.escapeProgress - ESCAPE_HIT_SETBACK);
+      this.escapeFlashT = 0.6;
+      sfx.growl();
+      this.popText(GAME_W / 2, GAME_H - 52, `도망 -${ESCAPE_HIT_SETBACK}s!`, "#ff5a4d");
+    }
   }
 
   /** 멘탈 회복 (회복 아이템) — 낡음 오버레이도 갱신 */
@@ -1737,6 +2329,8 @@ export class RunScene extends Phaser.Scene {
   private smash(go: Phaser.GameObjects.Image) {
     const lbl = go.getData("label") as Phaser.GameObjects.Text | undefined;
     if (lbl) lbl.destroy();
+    this.tweens.killTweensOf(go); // 회전·휩쓸기 등 진행 중 트윈 정리
+    if (this.sweepHand === go) this.sweepHand = undefined;
     const x = go.x;
     const y = go.y;
     go.destroy();
@@ -1763,7 +2357,13 @@ export class RunScene extends Phaser.Scene {
     this.makeEmojiTexture("tex_coin", COIN_EMOJI, 64);
     this.makeEmojiTexture("tex_fallback_obstacle", FALLBACK_OBSTACLE_EMOJI, 96);
     this.makeEmojiTexture("tex_chaser", CHASER_EMOJI[this.setup.category], 96);
-    if (this.stage?.boss) this.makeEmojiTexture("tex_boss", this.stage.boss.emoji, 128);
+    if (this.stage?.boss) {
+      this.makeEmojiTexture("tex_boss", this.stage.boss.emoji, 128);
+      this.makeEmojiTexture("tex_hand", "✋", 96); // 보스 손 휩쓸기
+      for (const atk of this.stage.boss.attacks ?? []) {
+        this.makeEmojiTexture(`tex_batk_${atk.emoji}`, atk.emoji, 96);
+      }
+    }
     for (const kind of ITEM_KINDS) {
       this.makeEmojiTexture(`tex_item_${kind}`, ITEM_EMOJI[kind], 80);
     }
@@ -1844,6 +2444,7 @@ export class RunScene extends Phaser.Scene {
   private startFever() {
     this.fever = true;
     this.feverTimer = FEVER_DUR;
+    sfx.fever();
     this.cameras.main.shake(250, 0.016);
     this.cameras.main.flash(220, 255, 180, 60);
     this.popText(GAME_W / 2, 220, "🔥 FEVER! 🔥", "#ffd84d", true);
@@ -1933,6 +2534,7 @@ export class RunScene extends Phaser.Scene {
     this.playerDmg.setVisible(false);
     this.tweens.killTweensOf(this.player);
     this.cameras.main.shake(260, 0.018);
+    sfx.collapse();
 
     // 멘탈 붕괴 — 빤쓰가 축 늘어짐 🫠
     this.popText(this.player.x, this.player.y - 30, "🫠", "#ffffff", true);
@@ -1944,12 +2546,27 @@ export class RunScene extends Phaser.Scene {
       duration: 500,
       ease: "Quad.easeIn",
     });
+    this.finishToOffice();
+  }
 
-    // 암전 → (침묵) → 🎤"출근." → 결과로
+  /** 공통 패배 마무리 — 암전 → (침묵) → "출근." → 결과 화면 */
+  private finishToOffice(subtitle?: string) {
     const black = this.add
       .rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x000000, 0)
       .setDepth(2000);
     this.tweens.add({ targets: black, alpha: 1, delay: 500, duration: 600 });
+    if (subtitle) {
+      const sub = this.add
+        .text(GAME_W / 2, GAME_H / 2 - 48, subtitle, {
+          fontSize: "18px",
+          color: "#9b9baf",
+          fontFamily: "system-ui, -apple-system, sans-serif",
+        })
+        .setOrigin(0.5)
+        .setDepth(2001)
+        .setAlpha(0);
+      this.tweens.add({ targets: sub, alpha: 1, delay: 1300, duration: 400 });
+    }
     const chul = this.add
       .text(GAME_W / 2, GAME_H / 2, "출근.", {
         fontSize: "46px",
@@ -1976,6 +2593,29 @@ export class RunScene extends Phaser.Scene {
         cleared: false,
       });
     });
+  }
+
+  /** 위기 비네트 텍스처 — 가장자리로 갈수록 붉어지는 방사형 그라데이션 */
+  private makeVignetteTexture() {
+    const key = "tex_vignette";
+    if (this.textures.exists(key)) this.textures.remove(key);
+    const tex = this.textures.createCanvas(key, GAME_W, GAME_H);
+    if (!tex) return;
+    const ctx = tex.getContext();
+    const grd = ctx.createRadialGradient(
+      GAME_W / 2,
+      GAME_H / 2,
+      170,
+      GAME_W / 2,
+      GAME_H / 2,
+      540,
+    );
+    grd.addColorStop(0, "rgba(255,30,30,0)");
+    grd.addColorStop(0.7, "rgba(255,25,25,0.28)");
+    grd.addColorStop(1, "rgba(255,15,15,0.6)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    tex.refresh();
   }
 
   private bgColor(): number {
