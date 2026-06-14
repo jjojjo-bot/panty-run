@@ -3,6 +3,7 @@ import type { GeneratedRunSetup, SituationCategory } from "@/lib/types";
 import { computeScore } from "@/lib/grade";
 import { getEquippedSkin, tintToHex } from "@/lib/progress";
 import { drawPanty } from "@/lib/pantyArt";
+import { SPRITE_MANIFEST, SPRITE_KEYS } from "../assets";
 import {
   getStage,
   type StageDef,
@@ -526,6 +527,14 @@ export class RunScene extends Phaser.Scene {
       this.terrainColor = this.stage.zones[0].ground;
     } else {
       this.terrainColor = 0x2b2b3a;
+    }
+  }
+
+  /** PNG 애셋 선로드 — 매니페스트에 등록된 스프라이트를 텍스처로 가져온다.
+   *  파일이 없으면 로드만 실패하고, create()에서 이모지·절차생성으로 폴백한다(게임 안 깨짐). */
+  preload() {
+    for (const a of SPRITE_MANIFEST) {
+      this.load.image(a.key, `/sprites/${a.file}`);
     }
   }
 
@@ -2521,6 +2530,9 @@ export class RunScene extends Phaser.Scene {
   }
 
   private makeEmojiTexture(key: string, emoji: string, size: number) {
+    // PNG 애셋이 성공적으로 로드된 키는 보존(이모지로 덮어쓰지 않음).
+    // 매니페스트 키지만 로드 실패한 경우엔 아래로 진행해 이모지로 폴백한다.
+    if (SPRITE_KEYS.has(key) && this.textures.exists(key)) return;
     if (this.textures.exists(key)) this.textures.remove(key);
     const tex = this.textures.createCanvas(key, size, size);
     if (!tex) return;
