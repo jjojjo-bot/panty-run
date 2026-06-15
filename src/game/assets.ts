@@ -26,6 +26,10 @@ export interface SpriteAsset {
 }
 
 export const SPRITE_MANIFEST: SpriteAsset[] = [
+  { key: "tex_player", file: "player.png" }, // 주인공 빤쓰 (펄럭이며 질주)
+  { key: "tex_chaser", file: "chaser_boss.png" }, // 추격자 = 분노한 상사 (위기 국면 등장)
+  { key: "tex_boss", file: "boss_monday.png" }, // 보스 MONDAY = 거대 월요일 달력
+  { key: "tex_hand", file: "boss_hand.png" }, // 보스 손 (발밑 휩쓸기 공격)
   // 생성한 PNG를 여기에 추가 — 예시:
   // { key: "tex_player", file: "player.png" },
   // { key: "tex_boss", file: "boss_monday.png" },

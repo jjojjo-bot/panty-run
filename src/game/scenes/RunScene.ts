@@ -580,7 +580,7 @@ export class RunScene extends Phaser.Scene {
     this.playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     this.playerBody.setAllowGravity(false);
     this.playerBody.moves = false; // 이동은 직접 관리, Arcade는 overlap 감지용
-    this.playerBody.setSize(40, 56, true);
+    this.setDisplayHitbox(this.player, 27, 37); // ≈ 원래 이모지 히트박스(26.7×37.3)
 
     // 낡음 오버레이 — 생명 줄수록 구멍·얼룩·찢김이 심해진다
     this.makeDamageTexture("tex_dmg1", 1);
@@ -1733,7 +1733,7 @@ export class RunScene extends Phaser.Scene {
     const hb = hand.body as Phaser.Physics.Arcade.Body;
     hb.setAllowGravity(false);
     hb.moves = false;
-    hb.setSize(50, 26, true);
+    this.setDisplayHitbox(hand, 30, 16); // ≈ 원래 이모지 휩쓸기 히트박스(30×16), 텍스처 크기 무관
     this.sweepCollider?.destroy(); // 직전 휩쓸기의 충돌체 정리(항상 1개만 유지)
     this.sweepCollider = this.physics.add.overlap(this.player, hand, () =>
       this.hitObstacle(hand),
@@ -2527,6 +2527,15 @@ export class RunScene extends Phaser.Scene {
     if (!tex) return;
     drawPanty(tex.getContext(), 96, type, colorHex);
     tex.refresh();
+  }
+
+  /** 물리 바디 크기를 '표시(월드) 픽셀' 기준으로 설정 — 텍스처 원본 크기(이모지 96 /
+   *  PNG 512 등)와 무관하게 동일 히트박스 유지. Arcade body = 원본픽셀 × 스케일이라,
+   *  텍스처가 커지면 같은 setSize라도 히트박스가 줄어 충돌이 사라지는 버그가 난다.
+   *  PNG 애셋으로 교체되는 모든 충돌 오브젝트(플레이어·보스 손·이미지 장애물 등)에 사용. */
+  private setDisplayHitbox(go: Phaser.GameObjects.Image, w: number, h: number) {
+    const toSrc = go.width / go.displayWidth; // 표시→원본 픽셀 환산(=1/scale)
+    (go.body as Phaser.Physics.Arcade.Body).setSize(w * toSrc, h * toSrc, true);
   }
 
   private makeEmojiTexture(key: string, emoji: string, size: number) {
