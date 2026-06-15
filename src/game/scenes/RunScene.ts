@@ -62,6 +62,7 @@ const DANGER_SPEED = 1.12; // 위기 중 가속 배수
 const ESCAPE_BONUS = 8; // 위기 탈출 시 비누방울 보너스
 const CHASER_GAP = 78; // 추격자 기본 추격 간격(px, 플레이어 뒤) — 화면에 보이게
 const CHASER_HIT_CLOSE = 0.4; // 위기 중 피격 시 추격자 근접도 증가량
+const CHASER_SIZE = 132; // 추격자 표시 크기(px) — 플레이어(64)보다 크게 위협적으로
 
 // ── 보스 근접(붙잡힘) 시스템 ──────────────────────────────────
 // 보스전의 진짜 위협: 피격마다 보스가 돌진해 가까워지고, 근접도 1.0이면
@@ -332,6 +333,7 @@ export class RunScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Image;
   private playerDmg!: Phaser.GameObjects.Image; // 생명 감소 시 낡음 오버레이
   private playerBody!: Phaser.Physics.Arcade.Body;
+  private playerStandScale = STAND_SCALE; // 서있는 기본 스케일(텍스처 크기에 맞춰 런타임 캡처)
   private bgSky!: Phaser.GameObjects.Graphics;
   private bgSkyline!: Phaser.GameObjects.Graphics; // 2.5D: 최원경 스카이라인(0.12×)
   private bgFar!: Phaser.GameObjects.Graphics; // 원경 언덕(0.4×)
@@ -576,6 +578,9 @@ export class RunScene extends Phaser.Scene {
     } else if (skin.tint !== 0xffffff) {
       this.player.setTintFill(skin.tint);
     }
+    // 서있는 기본 스케일을 실제 텍스처 기준으로 캡처(이모지 96 / PNG 512 등) — 스쿼시가
+    // 하드코딩 STAND_SCALE(96px 가정)을 쓰면 큰 텍스처에서 점프 시 거대해진다(버그 수정).
+    this.playerStandScale = this.player.scaleX;
     this.physics.add.existing(this.player);
     this.playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     this.playerBody.setAllowGravity(false);
@@ -1330,11 +1335,12 @@ export class RunScene extends Phaser.Scene {
   private squash(sx: number, sy: number) {
     if (this.isSliding || !this.alive) return;
     this.tweens.killTweensOf(this.player);
-    this.player.setScale(STAND_SCALE * sx, STAND_SCALE * sy);
+    const s = this.playerStandScale; // 텍스처 크기에 맞춘 기본 스케일(하드코딩 금지)
+    this.player.setScale(s * sx, s * sy);
     this.tweens.add({
       targets: this.player,
-      scaleX: STAND_SCALE,
-      scaleY: STAND_SCALE,
+      scaleX: s,
+      scaleY: s,
       duration: 170,
       ease: "Quad.easeOut",
     });
@@ -2014,11 +2020,11 @@ export class RunScene extends Phaser.Scene {
     this.chaserClose = 0;
     // 붉은 오라로 장애물과 구분 + 위협감
     this.chaserAura = this.add
-      .circle(this.chaserX, GROUND_Y, 48, 0xff2a2a, 0.34)
+      .circle(this.chaserX, GROUND_Y, CHASER_SIZE * 0.5, 0xff2a2a, 0.34)
       .setDepth(3)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.chaser = this.add.image(this.chaserX, GROUND_Y, "tex_chaser").setDepth(4);
-    this.chaser.setDisplaySize(78, 78);
+    this.chaser.setDisplaySize(CHASER_SIZE, CHASER_SIZE);
   }
 
   /** 추격자 위치·달리기 연출 갱신 */
@@ -2030,14 +2036,19 @@ export class RunScene extends Phaser.Scene {
     const gap = CHASER_GAP - this.chaserClose * 48; // close=1이면 30px 뒤까지 바짝
     this.chaserX = Phaser.Math.Linear(this.chaserX, PLAYER_X - gap, 0.07);
     c.x = this.chaserX;
+    // 바짝 붙을수록(chaserClose) 더 거대해져 위협적으로 덮친다
+    const loom = 1 + this.chaserClose * 0.25;
+    const size = CHASER_SIZE * loom;
+    c.setDisplaySize(size, size);
     c.y =
-      this.surfaceYAt(this.worldScroll + this.chaserX) -
-      34 +
-      Math.sin(this.elapsed * 13) * 6; // 달리는 바운스
+      this.surfaceYAt(this.worldScroll + this.chaserX) +
+      5 -
+      size / 2 +
+      Math.sin(this.elapsed * 13) * 6; // 발이 지면에 닿도록 + 달리는 바운스
     c.rotation = Math.sin(this.elapsed * 17) * 0.09;
     if (this.chaserAura) {
       this.chaserAura.setPosition(c.x, c.y);
-      this.chaserAura.setScale(1 + 0.12 * Math.sin(this.elapsed * 10));
+      this.chaserAura.setScale(loom * (1 + 0.12 * Math.sin(this.elapsed * 10)));
       // 가까워질수록 진해지는 붉은 맥동
       this.chaserAura.setAlpha(
         0.26 + 0.14 * Math.abs(Math.sin(this.elapsed * 10)) + this.chaserClose * 0.3,
@@ -2516,7 +2527,12 @@ export class RunScene extends Phaser.Scene {
     if (!this.playerDmg.visible) return;
     this.playerDmg.setPosition(this.player.x, this.player.y);
     this.playerDmg.rotation = this.player.rotation;
-    this.playerDmg.setScale(this.player.scaleX, this.player.scaleY);
+    // 오버레이 텍스처(96px)는 64px 표시 + 플레이어 '스쿼시 비율'만 반영.
+    // (player.scaleX를 그대로 쓰면 플레이어 텍스처가 512px일 때 오버레이가 쪼그라든다)
+    const base = 64 / this.playerDmg.width; // 오버레이 텍스처 → 64px 표시
+    const sqX = this.player.scaleX / this.playerStandScale; // 스쿼시 비율
+    const sqY = this.player.scaleY / this.playerStandScale;
+    this.playerDmg.setScale(base * sqX, base * sqY);
     this.playerDmg.setAlpha(this.player.alpha);
   }
 
