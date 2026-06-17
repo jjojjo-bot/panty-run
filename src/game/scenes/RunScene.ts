@@ -4,6 +4,7 @@ import { computeScore } from "@/lib/grade";
 import { getEquippedSkin, tintToHex } from "@/lib/progress";
 import { drawPanty } from "@/lib/pantyArt";
 import { SPRITE_MANIFEST, SPRITE_KEYS } from "../assets";
+import { ZONE_BG, ALL_BG_LAYERS } from "../bg";
 import {
   getStage,
   type StageDef,
@@ -341,6 +342,11 @@ export class RunScene extends Phaser.Scene {
   private terrain!: Phaser.GameObjects.Graphics;
   private propsGfx!: Phaser.GameObjects.Graphics; // 지면 소품(가로등, 1×)
   private fgStrip!: Phaser.GameObjects.Graphics; // 전경 풀숲 띠(1.3×, 플레이어 앞)
+  // 이미지 배경(2.5D 패럴랙스) — 존에 ZONE_BG 정의가 있고 텍스처가 로드되면 절차생성 대체
+  private bgImgLayers = new Map<string, Phaser.GameObjects.TileSprite>();
+  private usingBgImages = false; // 현재 존이 이미지 배경을 쓰는가
+  private flatGround = false; // 지형 평탄화(이미지 바닥) 여부
+  private flatGroundY = GROUND_Y; // 평탄화 시 표면 y
   private speedGfx!: Phaser.GameObjects.Graphics;
   private obstacles!: Phaser.Physics.Arcade.Group;
   private coins!: Phaser.Physics.Arcade.Group;
@@ -538,6 +544,10 @@ export class RunScene extends Phaser.Scene {
     for (const a of SPRITE_MANIFEST) {
       this.load.image(a.key, `/sprites/${a.file}`);
     }
+    // 배경 패럴랙스 레이어 — 없으면 로드만 실패하고 절차생성으로 폴백
+    for (const l of ALL_BG_LAYERS) {
+      this.load.image(l.key, `/sprites/${l.file}`);
+    }
   }
 
   create() {
@@ -555,6 +565,10 @@ export class RunScene extends Phaser.Scene {
     this.propsGfx = this.add.graphics().setDepth(-8);
     this.speedGfx = this.add.graphics().setDepth(-5);
     this.fgStrip = this.add.graphics().setDepth(30); // 플레이어(5)보다 앞 — 발끝이 풀에 가려지는 깊이감
+
+    // 이미지 배경 레이어 생성 + 현재 존 적용(플레이어 생성 전에 해야 flatGround가 발 위치에 반영됨)
+    this.buildBgImageLayers();
+    this.applyZoneBackground();
 
     this.streaks = [];
     for (let i = 0; i < 16; i++) {
@@ -738,9 +752,13 @@ export class RunScene extends Phaser.Scene {
       else this.tryJump();
     });
 
-    this.drawSky();
-    this.drawBackground();
-    this.drawTerrain();
+    if (this.usingBgImages) {
+      this.scrollBgImages();
+    } else {
+      this.drawSky();
+      this.drawBackground();
+      this.drawTerrain();
+    }
   }
 
   update(_time: number, delta: number) {
@@ -791,10 +809,14 @@ export class RunScene extends Phaser.Scene {
       this.feverOverlay.setFillStyle(hues[Math.floor(this.elapsed * 8) % hues.length]);
     }
 
-    this.drawBackground();
-    this.drawTerrain();
-    this.drawProps();
-    this.drawForeground();
+    if (this.usingBgImages) {
+      this.scrollBgImages();
+    } else {
+      this.drawBackground();
+      this.drawTerrain();
+      this.drawProps();
+      this.drawForeground();
+    }
     this.drawSpeedLines(dt, effSpeed);
     this.updatePlayer(dt);
     this.syncPlayerDmg();
@@ -928,6 +950,7 @@ export class RunScene extends Phaser.Scene {
    * 장애물·코인의 지형 기준 높이도 항상 일관되게 유지된다.
    */
   private surfaceYAt(worldX: number): number {
+    if (this.flatGround) return this.flatGroundY; // 이미지 바닥 — 평지
     const ramp = Phaser.Math.Clamp((worldX - 800) / 9000, 0, 1);
     const peak = 44 + ramp * 62; // 진폭 44px → 106px
     const unit =
@@ -943,6 +966,73 @@ export class RunScene extends Phaser.Scene {
     return (
       300 - Math.sin(worldX * 0.0016) * 42 - Math.sin(worldX * 0.0041 + 1.0) * 20
     );
+  }
+
+  /** 이미지 배경 레이어(TileSprite) 생성 — 로드된 텍스처만. 처음엔 모두 숨김. */
+  private buildBgImageLayers() {
+    for (const l of ALL_BG_LAYERS) {
+      if (!this.textures.exists(l.key)) continue; // 로드 실패 → 절차생성 폴백
+      const src = this.textures.get(l.key).getSourceImage() as { height: number };
+      const srcH = src.height || GAME_H;
+      let ts: Phaser.GameObjects.TileSprite;
+      if (l.anchor === "bottom") {
+        // 화면 하단에 band 높이의 띠 — 바닥처럼 일부만 보이는 불투명 레이어용
+        const band = l.band ?? 160;
+        ts = this.add
+          .tileSprite(0, GAME_H - band, GAME_W, band, l.key)
+          .setOrigin(0, 0)
+          .setDepth(l.depth)
+          .setVisible(false);
+        ts.setTileScale(l.scale ?? band / srcH);
+      } else {
+        // 캔버스 전체를 덮음(불투명 풀씬·투명 풀프레임)
+        ts = this.add
+          .tileSprite(0, 0, GAME_W, GAME_H, l.key)
+          .setOrigin(0, 0)
+          .setDepth(l.depth)
+          .setVisible(false);
+        ts.setTileScale(l.scale ?? GAME_H / srcH);
+      }
+      this.bgImgLayers.set(l.key, ts);
+    }
+  }
+
+  /** 현재 존에 맞는 배경 전환 — 이미지가 준비됐으면 절차생성 숨기고 이미지 표시(아니면 반대) */
+  private applyZoneBackground() {
+    const id = this.stage && !this.bossActive ? this.stage.zones[this.zoneIdx].id : undefined;
+    const def = id ? ZONE_BG[id] : undefined;
+    // 이 존의 모든 레이어가 실제 로드됐을 때만 이미지 모드
+    const ready = !!def && def.layers.every((l) => this.bgImgLayers.has(l.key));
+    this.usingBgImages = ready;
+    this.flatGround = ready && !!def!.flatGround;
+    this.flatGroundY = ready ? def!.groundY ?? GROUND_Y : GROUND_Y;
+
+    // 모든 이미지 레이어 숨긴 뒤, 준비된 존이면 해당 레이어만 표시
+    for (const ts of this.bgImgLayers.values()) ts.setVisible(false);
+    if (ready) {
+      for (const l of def!.layers) this.bgImgLayers.get(l.key)!.setVisible(true);
+    }
+    // 절차생성 그래픽은 이미지 모드일 때 숨김(스피드라인·엔티티는 유지)
+    const proc = !ready;
+    this.bgSky.setVisible(proc);
+    this.bgSkyline.setVisible(proc);
+    this.bgFar.setVisible(proc);
+    this.bgMid.setVisible(proc);
+    this.terrain.setVisible(proc);
+    this.propsGfx.setVisible(proc);
+    this.fgStrip.setVisible(proc);
+  }
+
+  /** 이미지 배경 패럴랙스 스크롤 — tilePositionX는 소스 픽셀 단위라 tileScale로 환산 */
+  private scrollBgImages() {
+    const id = this.stage?.zones[this.zoneIdx].id;
+    const def = id ? ZONE_BG[id] : undefined;
+    if (!def) return;
+    for (const l of def.layers) {
+      const ts = this.bgImgLayers.get(l.key);
+      if (!ts) continue;
+      ts.tilePositionX = (this.worldScroll * l.scroll) / ts.tileScaleX;
+    }
   }
 
   /** 구간 배경 — 위(밝은 하늘)→아래(구간 색) 세로 그라데이션으로 입체감·단계 차이 */
@@ -1610,7 +1700,8 @@ export class RunScene extends Phaser.Scene {
     const zone = this.stage!.zones[this.zoneIdx];
     this.terrainColor = zone.ground;
     this.cameras.main.setBackgroundColor(zone.bg);
-    this.drawSky();
+    this.applyZoneBackground(); // 이미지 배경 존이면 전환, 아니면 절차생성 유지
+    if (!this.usingBgImages) this.drawSky();
     this.cameras.main.flash(320, 30, 30, 50);
     sfx.zone();
     this.flashWarn(zone.name, "#cfe8ff");
@@ -1621,6 +1712,7 @@ export class RunScene extends Phaser.Scene {
     if (!this.stage?.boss) return;
     this.boss = this.stage.boss;
     this.bossActive = true;
+    this.applyZoneBackground(); // 보스전은 절차생성 배경(이미지 존이었다면 해제)
     this.escapeProgress = 0;
     this.bossClose = 0;
     this.bossLungeT = 0;
