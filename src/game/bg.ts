@@ -52,6 +52,30 @@ export const ZONE_BG: Record<string, ZoneBg> = {
       // fore(이불자락 bg_bedroom_fore.webp)는 너무 커서 플레이어를 가림 → 보류(추후 더 맞는 애셋으로 폴리시)
     ],
   },
+  living: {
+    flatGround: true,
+    groundY: 350,
+    layers: [
+      { key: "bg_living_back", file: "bg_living_back.webp", scroll: 0.25, depth: -28, anchor: "cover" },
+      { key: "bg_living_ground", file: "bg_living_ground.webp", scroll: 1.0, depth: -9, anchor: "bottom", band: 175 },
+    ],
+  },
+  hallway: {
+    flatGround: true,
+    groundY: 350,
+    layers: [
+      { key: "bg_hallway_back", file: "bg_hallway_back.webp", scroll: 0.25, depth: -28, anchor: "cover" },
+      { key: "bg_hallway_ground", file: "bg_hallway_ground.webp", scroll: 1.0, depth: -9, anchor: "bottom", band: 175 },
+    ],
+  },
+  street: {
+    flatGround: true,
+    groundY: 350,
+    layers: [
+      { key: "bg_street_back", file: "bg_street_back.webp", scroll: 0.25, depth: -28, anchor: "cover" },
+      { key: "bg_street_ground", file: "bg_street_ground.webp", scroll: 1.0, depth: -9, anchor: "bottom", band: 175 },
+    ],
+  },
 };
 
 /** preload용 — 모든 존의 레이어를 중복 키 제거해 평탄화한 목록 */
