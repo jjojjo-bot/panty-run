@@ -37,8 +37,8 @@ const PLAYER_X = 120;
 const GRAVITY = 2000;
 const JUMP_V = -780;
 const BASE_SPEED = 360;
-const SPEED_RAMP = 14;
-const MAX_SPEED = 820; // 기본 속도 상한 — 장시간(3분+) 플레이가 가능하도록
+const SPEED_RAMP = 18; // 가속(평지화 보정 — 굴곡으로 잃은 후반 상승을 속도로 보완)
+const MAX_SPEED = 900; // 기본 속도 상한 — 장시간(3분+) 플레이가 가능하도록
 const MENTAL_MAX = 100; // 멘탈(정신력) 최대 — 0이면 출근(게임오버)
 const DEFAULT_DAMAGE = 12; // 데이터에 없을 때 기본 멘탈 데미지
 const HIT_IFRAMES = 1.2; // 피격 후 무적 시간(초)
@@ -86,6 +86,10 @@ const FOOT_STAND = 30; // 서있을 때 발 오프셋(중심→발)
 const FOOT_SLIDE = 16; // 슬라이드 시 발 오프셋
 const OFF_GROUND_OBS = 30; // 지상 장애물(점프로 회피) 중심 높이
 const OFF_OVERHEAD = 52; // 머리 위 장애물(슬라이드로 회피) 중심 높이
+const OFF_PROJECTILE = 52; // 투사체(머리 높이로 날아옴) 중심 — 서있으면 맞고 숙이면 위로 빠짐
+const OFF_BOBBER = 30; // 떠다니는 장애물(점프로 회피) 기준 중심 높이
+const BOBBER_AMP = 16; // 떠다니는 장애물 상하 진폭(px) — 모든 위상에서 서있는 몸통과 겹치도록 작게
+const BOBBER_K = 0.03; // 진동 파수 — worldX 기반이라 결정적(흔들림 없음), 화면 폭당 ~4회 출렁
 const OFF_COIN = 100; // 코인 기본 높이
 
 const NEARMISS_GAP = 24; // 이 간격(px) 이내로 스쳐 지나가면 '아슬!'
@@ -253,7 +257,7 @@ const T_SOLO = JUMP_AIRTIME + 0.28; // 개별 점프 최소 간격(착지+반응
 const T_MIX = JUMP_AIRTIME + 0.12; // 점프↔슬라이드 전환 ≈0.9s
 const T_SLIDE = 0.8; // 슬라이드~슬라이드(슬라이드 0.6s 지속)
 
-type StepKind = "ground" | "overhead" | "arc" | "line";
+type StepKind = "ground" | "overhead" | "arc" | "line" | "bobber";
 interface PatternStep {
   kind: StepKind;
   gap: number; // 직전 스텝(첫 스텝은 패턴 시작)으로부터의 시간 간격(초)
@@ -304,8 +308,10 @@ const NORMAL_PATTERNS: Pattern[] = [
   { id: "jump-slide", steps: [{ kind: "ground", gap: 0 }, { kind: "overhead", gap: T_MIX }], tail: 0.5, diff: 2 },
   { id: "slide-jump", steps: [{ kind: "overhead", gap: 0 }, { kind: "ground", gap: T_MIX }], tail: 0.5, diff: 2 },
   { id: "tunnel", steps: [{ kind: "overhead", gap: 0 }, { kind: "overhead", gap: T_SLIDE }], tail: 0.5, diff: 2 },
-  // diff 3 — 3연타(각각 개별 점프 간격)
+  // diff 3 — 3연타(각각 개별 점프 간격) + 떠다니는 장애물
   { id: "stairs", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }, { kind: "ground", gap: T_SOLO }], tail: 0.6, diff: 3 },
+  { id: "bobber", steps: [{ kind: "bobber", gap: 0 }], tail: 0.6, diff: 3 }, // 상하로 출렁이며 다가옴 — 점프 타이밍 까다로움
+  { id: "bob-jump", steps: [{ kind: "bobber", gap: 0 }, { kind: "ground", gap: T_SOLO }], tail: 0.55, diff: 3 },
 ];
 
 // 위기: 점프·슬라이드가 번갈아 몰아침. 간격은 평상과 비슷하되 가속·추격자로 긴장
@@ -314,6 +320,7 @@ const DANGER_PATTERNS: Pattern[] = [
   { id: "d-slide-jump", steps: [{ kind: "overhead", gap: 0 }, { kind: "ground", gap: T_MIX }, { kind: "overhead", gap: T_MIX }], tail: 0.5 },
   { id: "d-double", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }], tail: 0.45 },
   { id: "d-triple", steps: [{ kind: "ground", gap: 0 }, { kind: "ground", gap: T_SOLO }, { kind: "ground", gap: T_SOLO }], tail: 0.5 },
+  { id: "d-bobber", steps: [{ kind: "bobber", gap: 0 }], tail: 0.5 }, // 위기에 떠다니는 장애물
 ];
 
 // 보스전 바닥 패턴: 가볍게 — 보스 공격(투척·휩쓸기)이 무대를 독점하도록
@@ -1324,6 +1331,9 @@ export class RunScene extends Phaser.Scene {
       }
       go.x = sx;
       go.y = this.surfaceYAt(worldX) - off;
+      // 떠다니는 장애물: worldX 기반 sin으로 상하 출렁(결정적 — 지나간 위치서 모양 안 바뀜)
+      const bobAmp = go.getData("bobAmp") as number | undefined;
+      if (bobAmp) go.y += bobAmp * Math.sin(worldX * BOBBER_K);
       const body = go.body as Phaser.Physics.Arcade.Body;
       body.updateFromGameObject();
 
@@ -1410,7 +1420,7 @@ export class RunScene extends Phaser.Scene {
     this.slideTimer = 0.6;
     this.tweens.killTweensOf(this.player); // 스쿼시 트윈과 충돌 방지
     this.player.setDisplaySize(72, 36);
-    this.playerBody.setSize(48, 28, true);
+    this.setDisplayHitbox(this.player, 50, 22); // 납작한 슬라이드 히트박스(표시 px 기준)
   }
 
   private endSlide() {
@@ -1418,7 +1428,7 @@ export class RunScene extends Phaser.Scene {
     this.slideTimer = 0;
     this.tweens.killTweensOf(this.player);
     this.player.setDisplaySize(64, 64);
-    this.playerBody.setSize(40, 56, true);
+    this.setDisplayHitbox(this.player, 27, 37); // 서있는 히트박스 복원(create와 동일)
   }
 
   /** 스쿼시&스트레치 — 현재 스케일에서 시작해 기본으로 복귀 */
@@ -1525,7 +1535,7 @@ export class RunScene extends Phaser.Scene {
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
     body.moves = false;
-    body.setSize(40, 44, true);
+    this.setDisplayHitbox(obs, 40, 46); // 표시 px 기준(텍스처 96/PNG 무관). 서있는 몸통 전체와 겹침
     this.obstacles.add(obs);
   }
 
@@ -1542,7 +1552,26 @@ export class RunScene extends Phaser.Scene {
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
     body.moves = false;
-    body.setSize(46, 26, true);
+    // 표시 px 기준 44×30 — 서있으면 머리와 겹쳐 맞고(슬라이드 강제), 숙이면 위로 빠짐
+    this.setDisplayHitbox(obs, 44, 30);
+    this.obstacles.add(obs);
+  }
+
+  /** 떠다니는 장애물(점프로 회피) — worldX 기반 sin으로 상하 출렁이며 다가온다 */
+  private spawnBobberAt(worldX: number) {
+    const pick = this.pickObstacle("jump");
+    const obs = this.add.image(0, 0, pick.tex);
+    obs.setDisplaySize(52, 52);
+    obs.setData("worldX", worldX);
+    obs.setData("off", OFF_BOBBER);
+    obs.setData("psx", worldX - this.worldScroll);
+    obs.setData("mental", pick.mental);
+    obs.setData("bobAmp", BOBBER_AMP); // updateObstacles가 이 값으로 y를 출렁이게 함
+    this.physics.add.existing(obs);
+    const body = obs.body as Phaser.Physics.Arcade.Body;
+    body.setAllowGravity(false);
+    body.moves = false;
+    this.setDisplayHitbox(obs, 40, 40);
     this.obstacles.add(obs);
   }
 
@@ -1627,6 +1656,9 @@ export class RunScene extends Phaser.Scene {
           break;
         case "line":
           this.spawnCoinLineAt(wx, step.n ?? 5);
+          break;
+        case "bobber":
+          this.spawnBobberAt(wx);
           break;
       }
     }
@@ -1964,7 +1996,7 @@ export class RunScene extends Phaser.Scene {
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
     body.moves = false;
-    body.setSize(62, 64, true);
+    this.setDisplayHitbox(obs, 58, 60); // 표시 px 기준(텍스처 96 무관)
     this.obstacles.add(obs);
   }
 
@@ -2037,7 +2069,7 @@ export class RunScene extends Phaser.Scene {
     const body = obs.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
     body.moves = false;
-    body.setSize(36, 34, true);
+    this.setDisplayHitbox(obs, 34, 30); // 표시 px 기준(텍스처 96 무관)
     this.obstacles.add(obs);
   }
 
@@ -2239,14 +2271,15 @@ export class RunScene extends Phaser.Scene {
     const flyList = this.stage.zones[this.zoneIdx].obstacles.filter((o) => o.avoid === "fly");
     if (!flyList.length) return;
     const o = flyList[Math.floor(Math.random() * flyList.length)];
-    const y = this.surfaceYAt(this.worldScroll + PLAYER_X) - 64; // 머리 높이
+    const y = this.surfaceYAt(this.worldScroll + PLAYER_X) - OFF_PROJECTILE; // 머리 높이
     const p = this.add.image(GAME_W + 40, y, `tex_zob_${o.emoji}`).setDepth(7);
     p.setDisplaySize(46, 46);
     this.physics.add.existing(p);
     const body = p.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(false);
     body.moves = false;
-    body.setSize(40, 40, true);
+    // 표시 px 기준 40×34 — 서있으면 상체와 겹쳐 맞고(슬라이드 강제), 숙이면 위로 빠짐
+    this.setDisplayHitbox(p, 40, 34);
     p.setData("mental", o.mental);
     p.setData("emoji", o.emoji);
     p.setData("vx", -Phaser.Math.Between(520, 600));
@@ -2274,7 +2307,7 @@ export class RunScene extends Phaser.Scene {
       const p = obj as Phaser.GameObjects.Image;
       const vx = (p.getData("vx") as number) ?? -560;
       p.x += vx * dt;
-      p.y = this.surfaceYAt(this.worldScroll + p.x) - 64; // 지형 위 머리 높이 유지(땅 밑 방지)
+      p.y = this.surfaceYAt(this.worldScroll + p.x) - OFF_PROJECTILE; // 지형 위 머리 높이 유지(땅 밑 방지)
       // 플레이어를 지나치면(=회피 성공) 종류별로 집계
       if (this.alive && p.x < PLAYER_X - 30 && !p.getData("passed")) {
         p.setData("passed", true);
@@ -2409,8 +2442,9 @@ export class RunScene extends Phaser.Scene {
       return;
     }
     this.smash(go); // 부딪힌 장애물 제거
-    // 속도는 구간 하한까지만 후퇴 — 실수해도 후반 구간의 압박은 유지
-    this.speed = Math.max(this.baseSpeed, this.currentSpeedCap() * 0.7);
+    // 피격해도 감속하지 않는다 — 예전엔 cap×0.7로 리셋했으나 '실수=숨통(쉬워짐)'이라
+    // 오히려 난이도를 떨어뜨렸다. 피격은 벌이어야 하므로 속도는 유지하고,
+    // 연속 피격은 무적프레임(HIT_IFRAMES)으로 막고 벌은 멘탈·콤보·피버 손실로 준다.
     this.invincibleTimer = Math.max(this.invincibleTimer, HIT_IFRAMES);
     this.combo = 0; // 콤보 끊김
     this.feverGauge = Math.max(0, this.feverGauge - HIT_GAUGE_PENALTY);

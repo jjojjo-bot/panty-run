@@ -66,9 +66,9 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "👕", avoid: "slide", mental: 6 }, // 널린 빨래
       ],
       dur: 40,
-      speedCap: 560, // 잠이 덜 깬 워밍업
+      speedCap: 600, // 잠이 덜 깬 워밍업(평지화 보정으로 약간 ↑)
       maxDiff: 1,
-      gapScale: 1.15,
+      gapScale: 1.0,
     },
     {
       id: "living",
@@ -82,8 +82,9 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "💬", avoid: "fly", mental: 10, label: "김대리 출근했어요?" }, // 회사 카톡
       ],
       dur: 45,
-      speedCap: 650,
+      speedCap: 710,
       maxDiff: 2,
+      gapScale: 0.9,
       projEvery: [2.0, 3.0], // 첫 투사체 구간이라 너그럽게
     },
     {
@@ -97,9 +98,9 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "🛗", avoid: "slide", mental: 10 }, // 엘리베이터 문
       ],
       dur: 45,
-      speedCap: 730,
+      speedCap: 800,
       maxDiff: 3,
-      gapScale: 0.9,
+      gapScale: 0.8,
     },
     {
       id: "street",
@@ -112,9 +113,9 @@ export const MONDAY_STAGE: StageDef = {
         { emoji: "☕", avoid: "fly", mental: 15, label: "모닝커피" }, // 날아오는 커피
       ],
       dur: 50,
-      speedCap: 820, // 보스 직전 최고조
+      speedCap: 900, // 보스 직전 최고조
       maxDiff: 3,
-      gapScale: 0.8,
+      gapScale: 0.72,
       projEvery: [1.4, 2.2],
     },
   ],
