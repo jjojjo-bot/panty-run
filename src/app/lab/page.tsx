@@ -2,14 +2,14 @@
 
 import dynamic from "next/dynamic";
 
-// 루트 = 음악-비행 빤쓰 (2026-06-25 전환). 옛 횡스크롤 러너 홈은 /classic 에 보존.
 const LabGame = dynamic(() => import("@/game/LabGame"), { ssr: false });
 
-export default function HomePage() {
+// 게임성 검증용 프로토타입 실험실 (/lab). 메인 게임과 분리.
+export default function LabPage() {
   return (
     <main className="min-h-dvh flex flex-col items-center justify-start bg-black gap-3 p-4 overflow-y-auto no-select">
-      <h1 className="text-white/80 font-mono text-sm tracking-widest mt-1">
-        🩲 PANTY RUN — 음악을 나는 빤쓰
+      <h1 className="text-white/80 font-mono text-sm tracking-widest">
+        🧪 GAMEPLAY LAB — 회색 박스 토이 검증
       </h1>
       <LabGame />
     </main>
