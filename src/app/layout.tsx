@@ -2,8 +2,22 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://bbanzzrun.com"),
   title: "빤쓰런 — Panty Run",
-  description: "현실에서 도망치고 싶은 순간을, 빤쓰가 대신 달려준다.",
+  description: "🎵 음악을 타고 하늘을 나는 빤쓰. 곧 출시됩니다.",
+  openGraph: {
+    title: "빤쓰런 — Panty Run",
+    description: "🎵 음악을 타고 하늘을 나는 빤쓰. 곧 출시됩니다.",
+    url: "/",
+    siteName: "빤쓰런",
+    locale: "ko_KR",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "빤쓰런 — Panty Run",
+    description: "🎵 음악을 타고 하늘을 나는 빤쓰. 곧 출시됩니다.",
+  },
 };
 
 export const viewport: Viewport = {

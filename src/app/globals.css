@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "Pretendard";
+  src: url("/fonts/Pretendard-Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
 }
@@ -23,4 +31,93 @@ body {
 .no-select {
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* ===== Landing teaser animations ===== */
+
+/* Hero panty gently bobbing as if floating in the air */
+@keyframes bb-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg);
+  }
+  50% {
+    transform: translateY(-14px) rotate(2deg);
+  }
+}
+
+/* Soft glow behind the hero, pulsing like a heartbeat of sound */
+@keyframes bb-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.08);
+  }
+}
+
+/* Music notes drifting upward and fading */
+@keyframes bb-note {
+  0% {
+    transform: translateY(0) translateX(0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.5;
+  }
+  90% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateY(-120px) translateX(var(--bb-drift, 16px)) rotate(20deg);
+    opacity: 0;
+  }
+}
+
+/* Shimmer sweep across the COMING SOON pill */
+@keyframes bb-shimmer {
+  0% {
+    background-position: -120% 0;
+  }
+  100% {
+    background-position: 220% 0;
+  }
+}
+
+.bb-float {
+  animation: bb-float 5s ease-in-out infinite;
+  will-change: transform;
+}
+
+.bb-glow {
+  animation: bb-glow 4.5s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+.bb-note {
+  animation: bb-note linear infinite;
+  will-change: transform, opacity;
+}
+
+.bb-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(255, 216, 77, 0.45) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: bb-shimmer 3.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bb-float,
+  .bb-glow,
+  .bb-note,
+  .bb-shimmer {
+    animation: none;
+  }
 }
